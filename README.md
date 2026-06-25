@@ -331,30 +331,25 @@ product_line	level	keyword	notes
 
 ## Public Data Boundary
 
-The repository intentionally excludes:
+This public demo is intended to contain source code, documentation, tests, launchers, and sanitized templates only.
 
-```text
-data/
-database/
-outputs/
-logs/
-real config/*.xlsx
-real config/*.csv
-browser profiles
-cookies, sessions, tokens
-generated report HTML/JSON/Excel files
-```
+| Category | Public repo policy |
+| --- | --- |
+| Store exports | Real advertising, ERP, Seller Central, cost, SKU, and ASIN exports are excluded. |
+| Generated outputs | Report HTML, JSON, Excel, SQLite, cache, archive, and log files are excluded. |
+| Private configuration | Real `config/*.xlsx` and `config/*.csv` files are excluded. Only sanitized examples under `config/templates/` are tracked. |
+| Browser state | Browser profiles, cookies, sessions, and frontend cache state are excluded. |
+| Credentials | Tokens, passwords, API keys, authorization headers, and environment secrets are excluded. |
 
-Only demo templates under `config/templates/` are tracked.
-
-Before sharing a fork publicly, verify:
+Recommended public-release checks:
 
 ```bash
-git status --short data config
-git grep -n -I -E "token|secret|password|cookie|session|Authorization|Bearer"
+git status --short data database logs config
+git grep -n -I -E "AKIA[0-9A-Z]{16}|(token|secret|password|cookie)[[:space:]]*[=:][[:space:]]*['\\\"][^'\\\"]{12,}|Authorization:[[:space:]]+|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}" -- ':!README.md'
+git ls-files | grep -E "data/|database/|logs/|\\.env$|\\.sqlite$|\\.db$|\\.html$|\\.xlsx$|\\.csv$"
 ```
 
-No real business exports, generated reports, local browser profiles, credentials, or private configuration files should be committed.
+Expected output from the first two commands is empty. Expected tracked spreadsheet or CSV files in the third command are limited to sanitized templates such as `config/templates/*.example.xlsx` and `config/templates/*.example.csv`.
 
 ## Notes
 
