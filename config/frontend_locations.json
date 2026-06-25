@@ -1,0 +1,17 @@
+{
+  "UK": {
+    "postcode": "SW1A 1AA",
+    "locale": "en-GB",
+    "timezone": "Europe/London"
+  },
+  "US": {
+    "postcode": "10001",
+    "locale": "en-US",
+    "timezone": "America/New_York"
+  },
+  "DE": {
+    "postcode": "10115",
+    "locale": "de-DE",
+    "timezone": "Europe/Berlin"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "description": "Demo product-line keyword intent library. Replace this file with your own private taxonomy in real operations.",
+  "level_policy": {
+    "核心词": "Highly relevant purchase-intent terms. Use bid control and listing checks before negating.",
+    "可测词": "Relevant long-tail or adjacent terms worth small-budget testing.",
+    "泛词": "Broad category terms. Keep conservative bids until evidence is strong.",
+    "低质词": "Weak or ambiguous terms. Observe or keep low bids.",
+    "禁词": "Clearly irrelevant terms. Eligible for exact negative after click/spend thresholds."
+  },
+  "product_lines": [
+    {
+      "product_line": "demo_storage_bin",
+      "name_patterns": ["demo storage bin", "storage bin", "plastic storage box"],
+      "keyword_levels": {
+        "核心词": ["storage bin", "plastic storage box", "storage container"],
+        "可测词": ["small storage bin", "storage box with lid", "office storage box"],
+        "泛词": ["storage", "organizer", "box"],
+        "低质词": ["decorative basket", "display box"],
+        "禁词": ["food bag", "trash bag", "laundry basket"]
+      },
+      "core_keywords": ["storage bin", "plastic storage box", "storage container"],
+      "broad_keywords": ["storage", "organizer", "box"],
+      "irrelevant_keywords": ["food bag", "trash bag", "laundry basket"],
+      "competitor_keywords": []
+    },
+    {
+      "product_line": "demo_tea_caddy",
+      "name_patterns": ["demo tea caddy", "tea caddy", "tea storage box"],
+      "keyword_levels": {
+        "核心词": ["tea caddy", "tea storage box", "tea bag organizer"],
+        "可测词": ["wooden tea box", "tea organizer with lid", "tea bag storage"],
+        "泛词": ["kitchen storage", "organizer", "wooden box"],
+        "低质词": ["display box", "gift box"],
+        "禁词": ["coffee capsule", "spice rack", "jewellery box"]
+      },
+      "core_keywords": ["tea caddy", "tea storage box", "tea bag organizer"],
+      "broad_keywords": ["kitchen storage", "organizer", "wooden box"],
+      "irrelevant_keywords": ["coffee capsule", "spice rack", "jewellery box"],
+      "competitor_keywords": []
+    },
+    {
+      "product_line": "demo_cable_clips",
+      "name_patterns": ["demo cable clips", "cable clips", "cable organiser clips", "cable organizer clips"],
+      "keyword_levels": {
+        "核心词": ["cable clips", "cable organizer clips", "cable organiser clips"],
+        "可测词": ["desk cable clips", "adhesive cable clips", "wire clips"],
+        "泛词": ["cable management", "desk organizer", "clips"],
+        "低质词": ["decorative clips", "paper clips"],
+        "禁词": ["hair clips", "bag clips", "binder clips"]
+      },
+      "core_keywords": ["cable clips", "cable organizer clips", "cable organiser clips"],
+      "broad_keywords": ["cable management", "desk organizer", "clips"],
+      "irrelevant_keywords": ["hair clips", "bag clips", "binder clips"],
+      "competitor_keywords": []
+    }
+  ]
+}

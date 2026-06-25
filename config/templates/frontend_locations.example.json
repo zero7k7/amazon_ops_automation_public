@@ -1,0 +1,14 @@
+{
+  "UK": {
+    "postcode": "SW1A 1AA",
+    "location_label": "London demo location"
+  },
+  "US": {
+    "postcode": "10001",
+    "location_label": "New York demo location"
+  },
+  "DE": {
+    "postcode": "10115",
+    "location_label": "Berlin demo location"
+  }
+}
