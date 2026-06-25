@@ -16,6 +16,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
         python-version: ["3.13"]
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - name: Checkout

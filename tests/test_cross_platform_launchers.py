@@ -28,6 +28,13 @@ def test_import_and_uk_bat_use_public_python_resolver() -> None:
         assert ".venv_mac" not in text
 
 
+def test_windows_python_resolver_enables_utf8() -> None:
+    text = (ROOT / "scripts/windows_python.bat").read_text(encoding="utf-8")
+
+    assert "PYTHONUTF8=1" in text
+    assert "PYTHONIOENCODING=utf-8" in text
+
+
 def test_report_window_opens_with_cross_platform_webbrowser(monkeypatch) -> None:
     from scripts import run_report_window
 

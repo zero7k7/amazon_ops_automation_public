@@ -1,13 +1,28 @@
 ﻿from __future__ import annotations
 
 import argparse
+import sys
+
+
+def _configure_console_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
+_configure_console_encoding()
+
 print("[BOOT] main.py started", flush=True)
 import csv
 import json
 import os
 import re
 import shutil
-import sys
 import time
 import urllib.parse
 from datetime import datetime

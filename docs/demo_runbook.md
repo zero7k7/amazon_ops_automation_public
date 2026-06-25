@@ -15,6 +15,7 @@ python3 -m venv .venv
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -31,6 +32,7 @@ macOS or Linux shell:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe scripts\setup_demo_data.py
 ```
 
@@ -54,6 +56,7 @@ macOS or Linux shell:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
 ```
 
@@ -79,6 +82,7 @@ macOS or Linux shell:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe scripts\validate_showcase_mvp.py
 ```

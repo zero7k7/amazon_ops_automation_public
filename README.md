@@ -210,6 +210,7 @@ python3 -m venv .venv
 ### Windows PowerShell
 
 ```powershell
+$env:PYTHONUTF8="1"
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -323,6 +324,7 @@ Run the test suite:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe -m pytest
 ```
 
@@ -335,6 +337,7 @@ Run a report generation smoke test:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
 ```
 
@@ -347,6 +350,7 @@ Run the full showcase validation:
 Windows PowerShell:
 
 ```powershell
+$env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe scripts\validate_showcase_mvp.py
 ```
 

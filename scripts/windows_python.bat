@@ -1,5 +1,7 @@
 @echo off
 
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
 set "PYTHON_ARGS="
 if exist "%PYTHON_EXE%" exit /b 0
