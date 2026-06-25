@@ -7,6 +7,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 try:
@@ -93,9 +94,7 @@ def _run_checked(command: list[str]) -> int:
 
 
 def _open_report() -> None:
-    try:
-        subprocess.run(["open", REPORT_URL], cwd=ROOT, check=False)
-    except OSError:
+    if not webbrowser.open(REPORT_URL):
         print(REPORT_URL, flush=True)
 
 

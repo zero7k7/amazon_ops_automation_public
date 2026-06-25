@@ -178,11 +178,12 @@ It is not a hosted SaaS product, a managed Amazon API integration, or a plug-and
 
 ## Platform Status
 
-This public demo is currently a macOS-first local version. The checked demo workflow is validated on macOS with a local Python environment.
+This public demo is designed for local macOS and Windows smoke tests.
 
-- Core report generation is plain Python and should be portable after dependency setup.
-- Local browser, clipboard, shell, and daily-ops conveniences are macOS-validated.
-- Windows users should treat this as source code plus a demo pipeline until Windows launch scripts and browser/clipboard fallbacks are separately verified.
+- Core report generation is plain Python and does not require a browser.
+- Python 3.13 is supported through the `legacy-cgi` compatibility dependency used by the local upload service.
+- Windows launchers are included for daily report generation, local report buttons, and frontend retry sessions.
+- Live browser frontend checks remain optional. Amazon can still block or challenge browser reads, so browser evidence is never required for demo report generation.
 
 ## What It Does
 
@@ -194,7 +195,9 @@ This public demo is currently a macOS-first local version. The checked demo work
 - Keeps optional Amazon frontend checks as best-effort enrichment, not a hard dependency.
 - Includes a local demo data generator so the project can run after clone.
 
-## Quick Start (macOS-validated)
+## Quick Start
+
+### macOS or Linux shell
 
 ```bash
 python3 -m venv .venv
@@ -202,6 +205,16 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python scripts/setup_demo_data.py
 .venv/bin/python main.py --marketplace ALL --safe-run
+```
+
+### Windows PowerShell
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe scripts\setup_demo_data.py
+.\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
 ```
 
 Reports are written under:
@@ -216,6 +229,21 @@ Open:
 latest_recommendations.html
 dashboard.html
 summary.html
+```
+
+## Local Launchers
+
+After installing dependencies and creating demo data, the root launchers can be used for a local operator-style session.
+
+| Platform | Daily report with local buttons | Start button service only | Retry frontend checks |
+| --- | --- | --- | --- |
+| macOS | `run_today_report.command` | `start_report_action_server.command` | `retry_frontend_checks.command` |
+| Windows | `run_today_report.bat` | `start_report_action_server.bat` | `retry_frontend_checks.bat` |
+
+The default daily workflow uses no-browser frontend checks with cache fallback. To try live Chrome CDP checks, set `AMAZON_OPS_ENABLE_BROWSER_FRONTEND=1`. On Windows, set `AMAZON_OPS_CHROME_PATH` if Chrome is not installed at:
+
+```text
+C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
 
 ## Demo Data
@@ -292,10 +320,34 @@ Run the test suite:
 .venv/bin/python -m pytest
 ```
 
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+
 Run a report generation smoke test:
 
 ```bash
 .venv/bin/python main.py --marketplace ALL --safe-run
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
+```
+
+Run the full showcase validation:
+
+```bash
+.venv/bin/python scripts/validate_showcase_mvp.py
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_showcase_mvp.py
 ```
 
 ## Notes

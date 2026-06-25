@@ -21,12 +21,12 @@ from urllib.parse import parse_qs, urlparse
 from openpyxl import load_workbook
 
 try:
+    from scripts.chrome_cdp_helper import DEFAULT_CHROME_PATH
     from scripts.chrome_cdp_helper import DEFAULT_ENDPOINT as CHROME_CDP_ENDPOINT
-    from scripts.chrome_cdp_helper import MAC_CHROME_APP
     from scripts.chrome_cdp_helper import endpoint_available as _chrome_cdp_endpoint_available
 except ModuleNotFoundError:  # pragma: no cover - used when executed as scripts/report_action_server.py
+    from chrome_cdp_helper import DEFAULT_CHROME_PATH
     from chrome_cdp_helper import DEFAULT_ENDPOINT as CHROME_CDP_ENDPOINT
-    from chrome_cdp_helper import MAC_CHROME_APP
     from chrome_cdp_helper import endpoint_available as _chrome_cdp_endpoint_available
 
 
@@ -491,11 +491,13 @@ def _chrome_cdp_available(endpoint: str = CHROME_CDP_ENDPOINT) -> bool:
 def _start_chrome_cdp_if_needed(endpoint: str = CHROME_CDP_ENDPOINT, wait_seconds: float = 12.0) -> bool:
     if _chrome_cdp_available(endpoint):
         return True
-    if not Path(MAC_CHROME_APP).exists():
+    chrome_path = os.environ.get("AMAZON_OPS_CHROME_PATH", "").strip() or DEFAULT_CHROME_PATH
+    if not Path(chrome_path).exists():
         return False
     profile_dir = OUTPUT_DIR / "chrome_cdp_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    chrome_args = [
+    command = [
+        chrome_path,
         "--remote-debugging-port=9222",
         f"--user-data-dir={profile_dir}",
         "--no-first-run",
@@ -504,17 +506,18 @@ def _start_chrome_cdp_if_needed(endpoint: str = CHROME_CDP_ENDPOINT, wait_second
         "--window-size=1280,900",
         "about:blank",
     ]
-    command = [
-        "/usr/bin/open",
-        "-g",
-        "-na",
-        "Google Chrome",
-        "--args",
-        *chrome_args,
-    ]
     log_path = OUTPUT_DIR / "chrome_cdp_launch.log"
     log_file = log_path.open("a", encoding="utf-8")
-    subprocess.Popen(command, cwd=ROOT, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+    popen_kwargs: dict[str, object] = {
+        "cwd": ROOT,
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    subprocess.Popen(command, **popen_kwargs)
     deadline = time.monotonic() + max(wait_seconds, 1.0)
     while time.monotonic() < deadline:
         if _chrome_cdp_available(endpoint):

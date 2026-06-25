@@ -4,28 +4,8 @@ setlocal
 cd /d "%~dp0.."
 set "PROJECT_ROOT=%CD%"
 
-set "PYTHON_EXE="
-set "PYTHON_ARGS="
-
-if exist "C:\Users\Admin\python-sdk\python3.13.2\python.exe" (
-    set "PYTHON_EXE=C:\Users\Admin\python-sdk\python3.13.2\python.exe"
-) else (
-    where python >nul 2>nul
-    if not errorlevel 1 set "PYTHON_EXE=python"
-)
-
-if not defined PYTHON_EXE (
-    where py >nul 2>nul
-    if not errorlevel 1 (
-        set "PYTHON_EXE=py"
-        set "PYTHON_ARGS=-3"
-    )
-)
-
-if not defined PYTHON_EXE (
-    echo [ERROR] Python was not found.
-    echo Please install Python or check:
-    echo C:\Users\Admin\python-sdk\python3.13.2\python.exe
+call scripts\windows_python.bat
+if errorlevel 1 (
     pause
     exit /b 1
 )

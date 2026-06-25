@@ -27,6 +27,8 @@ class ProcessMatch:
 
 
 def _ps_rows() -> list[tuple[int, str]]:
+    if os.name == "nt":
+        return _windows_process_rows()
     try:
         completed = subprocess.run(
             ["ps", "-axo", "pid=,command="],
@@ -53,7 +55,41 @@ def _ps_rows() -> list[tuple[int, str]]:
     return rows
 
 
+def _windows_process_rows() -> list[tuple[int, str]]:
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        (
+            "Get-CimInstance Win32_Process | "
+            "ForEach-Object { '{0}\t{1}' -f $_.ProcessId, ($_.CommandLine -replace \"`r|`n\", ' ') }"
+        ),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return []
+    rows: list[tuple[int, str]] = []
+    for line in completed.stdout.splitlines():
+        pid_text, _, command_line = line.partition("\t")
+        try:
+            pid = int(pid_text.strip())
+        except ValueError:
+            continue
+        rows.append((pid, command_line.strip()))
+    return rows
+
+
 def _listener_pids(port: int = REPORT_SERVER_PORT) -> set[int]:
+    if os.name == "nt":
+        return _windows_listener_pids(port)
     try:
         completed = subprocess.run(
             ["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"],
@@ -74,6 +110,73 @@ def _listener_pids(port: int = REPORT_SERVER_PORT) -> set[int]:
     return pids
 
 
+def _listener_pids_from_netstat(output: str, port: int = REPORT_SERVER_PORT) -> set[int]:
+    pids: set[int] = set()
+    suffix = f":{port}"
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        proto = parts[0].upper()
+        local_address = parts[1]
+        state = parts[3].upper() if proto.startswith("TCP") else ""
+        pid_text = parts[-1]
+        if not proto.startswith("TCP") or state != "LISTENING":
+            continue
+        if not local_address.endswith(suffix):
+            continue
+        try:
+            pids.add(int(pid_text))
+        except ValueError:
+            continue
+    return pids
+
+
+def _windows_listener_pids(port: int = REPORT_SERVER_PORT) -> set[int]:
+    powershell_command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        (
+            f"Get-NetTCPConnection -LocalPort {int(port)} -State Listen "
+            "| Select-Object -ExpandProperty OwningProcess -Unique"
+        ),
+    ]
+    try:
+        completed = subprocess.run(
+            powershell_command,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        completed = None
+    pids: set[int] = set()
+    if completed and completed.returncode == 0:
+        for line in completed.stdout.splitlines():
+            try:
+                pids.add(int(line.strip()))
+            except ValueError:
+                continue
+        if pids:
+            return pids
+
+    try:
+        netstat = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return set()
+    return _listener_pids_from_netstat(netstat.stdout, port)
+
+
 def _report_server_health_ok(timeout: float = 0.6) -> bool:
     try:
         with urllib.request.urlopen(REPORT_SERVER_HEALTH_URL, timeout=timeout) as response:
@@ -84,18 +187,20 @@ def _report_server_health_ok(timeout: float = 0.6) -> bool:
 
 
 def _is_project_report_server(command: str) -> bool:
-    normalized = command.replace("\\ ", " ")
+    normalized = command.replace("\\ ", " ").replace("\\", "/")
+    script = str(REPORT_SERVER_SCRIPT).replace("\\", "/")
     return (
-        str(REPORT_SERVER_SCRIPT) in normalized
+        script in normalized
         or "scripts/report_action_server.py" in normalized
+        or "scripts/report_action_server.py".replace("/", "\\") in command
     )
 
 
 def _is_project_chrome_cdp(command: str, profile_dir: Path = CHROME_PROFILE_DIR) -> bool:
-    normalized = command.replace("\\ ", " ")
-    profile = str(profile_dir)
+    normalized = command.replace("\\ ", " ").replace("\\", "/").lower()
+    profile = str(profile_dir).replace("\\", "/").lower()
     return (
-        "Google Chrome" in normalized
+        ("google chrome" in normalized or "chrome.exe" in normalized)
         and "--remote-debugging-port=9222" in normalized
         and (
             f"--user-data-dir={profile}" in normalized

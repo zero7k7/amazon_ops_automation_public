@@ -955,7 +955,7 @@ def test_battle_diagnosis_uses_urllib_cache_path(monkeypatch, tmp_path) -> None:
     assert "chrome-persistent" not in calls[0]
 
 
-def test_chrome_cdp_launch_uses_background_offscreen_window(monkeypatch, tmp_path) -> None:
+def test_chrome_cdp_launch_uses_configured_chrome_path(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     fake_chrome = tmp_path / "Google Chrome"
     fake_chrome.write_text("", encoding="utf-8")
@@ -975,7 +975,7 @@ def test_chrome_cdp_launch_uses_background_offscreen_window(monkeypatch, tmp_pat
         calls.append(command)
         return DummyProcess()
 
-    monkeypatch.setattr(server, "MAC_CHROME_APP", str(fake_chrome))
+    monkeypatch.setenv("AMAZON_OPS_CHROME_PATH", str(fake_chrome))
     monkeypatch.setattr(server, "_chrome_cdp_available", fake_available)
     monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
 
@@ -983,7 +983,7 @@ def test_chrome_cdp_launch_uses_background_offscreen_window(monkeypatch, tmp_pat
 
     assert len(calls) == 1
     command = calls[0]
-    assert command[:5] == ["/usr/bin/open", "-g", "-na", "Google Chrome", "--args"]
+    assert command[0] == str(fake_chrome)
     assert "--remote-debugging-port=9222" in command
     assert any(part.startswith("--user-data-dir=") and "chrome_cdp_profile" in part for part in command)
     assert "--window-position=-32000,-32000" in command
