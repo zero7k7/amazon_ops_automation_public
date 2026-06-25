@@ -13,9 +13,9 @@ BLOCKED_SUFFIXES = {".csv", ".xlsx"}
 
 def _relative(path: Path) -> str:
     try:
-        return str(path.relative_to(ROOT))
+        return path.relative_to(ROOT).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _business_files(directory: Path) -> list[Path]:

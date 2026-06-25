@@ -550,6 +550,14 @@ def _report_file_link(path: Path) -> str:
         return ""
 
 
+def _relative_path_text(path: Path, root: Path | None = None) -> str:
+    root = ROOT if root is None else root
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _config_audit_links(kind: str) -> dict[str, str]:
     if kind != "cost":
         return {}
@@ -566,8 +574,8 @@ def _config_status_payload() -> dict[str, object]:
         target_path = Path(config["target_path"])
         items[kind] = {
             "label": config.get("label"),
-            "target_path": str(target_path.relative_to(ROOT)),
-            "pending_path": str(review_path.relative_to(ROOT)),
+            "target_path": _relative_path_text(target_path),
+            "pending_path": _relative_path_text(review_path),
             "has_pending": review_path.exists(),
             "pending_size": review_path.stat().st_size if review_path.exists() else 0,
             "requires_confirm": bool(config.get("requires_confirm")),
@@ -1209,7 +1217,7 @@ def _apply_pending_config(kind: str) -> tuple[dict[str, object], subprocess.Comp
     review_path = Path(config["review_path"])
     target_path = Path(config["target_path"])
     if not review_path.exists():
-        raise FileNotFoundError(f"没有待应用配置：{review_path.relative_to(ROOT)}")
+        raise FileNotFoundError(f"没有待应用配置：{_relative_path_text(review_path)}")
     errors = _validate_config_workbook(kind, review_path)
     if errors:
         raise ValueError("；".join(errors))
@@ -1224,8 +1232,8 @@ def _apply_pending_config(kind: str) -> tuple[dict[str, object], subprocess.Comp
         completed = _run_command([sys.executable, "scripts/validate_showcase_mvp.py"], timeout=900)
     return {
         "kind": kind,
-        "target_path": str(target_path.relative_to(ROOT)),
-        "archive_path": str(archive_path.relative_to(ROOT)) if archive_path else "",
+        "target_path": _relative_path_text(target_path),
+        "archive_path": _relative_path_text(archive_path) if archive_path else "",
         "refresh_returncode": completed.returncode if completed else None,
         "stdout_tail": completed.stdout[-4000:] if completed else "",
         "stderr_tail": completed.stderr[-4000:] if completed else "",
@@ -1273,7 +1281,7 @@ def _save_uploaded_files(form: cgi.FieldStorage) -> tuple[list[dict[str, object]
             {
                 "original_filename": filename,
                 "saved_filename": target_path.name,
-                "path": str(target_path.relative_to(ROOT)),
+                "path": _relative_path_text(target_path),
                 "size": len(raw),
             }
         )
@@ -1312,7 +1320,7 @@ def _save_config_upload(form: cgi.FieldStorage, kind: str) -> tuple[dict[str, ob
         "label": str(config.get("label") or kind),
         "original_filename": filename,
         "saved_filename": review_path.name,
-        "path": str(review_path.relative_to(ROOT)),
+        "path": _relative_path_text(review_path),
         "size": len(raw),
         "requires_confirm": bool(config.get("requires_confirm")),
     }, []
