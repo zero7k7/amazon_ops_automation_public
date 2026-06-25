@@ -49,6 +49,21 @@ data/raw_erp/sales_report_all.xlsx
 
 These files are ignored by Git. The script refuses to overwrite existing files unless `--force` is passed.
 
+## Use With Your Own Store
+
+The demo can run immediately after clone. Real store operation requires your own exported files and mapping tables:
+
+```text
+config/product_cost_config.xlsx
+config/sku_alias_map.xlsx
+config/sku_asin_map.xlsx
+config/product_keyword_rules.csv
+data/raw_ads/
+data/raw_erp/
+```
+
+Start from the examples in `config/templates/`, then keep real store files out of Git. Report quality depends on correct cost, SKU, ASIN, and marketplace mapping. If those inputs are incomplete, the generated recommendations should be treated as a smoke test instead of an operating decision.
+
 ## Public Data Boundary
 
 The repository intentionally excludes:
