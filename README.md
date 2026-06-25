@@ -54,6 +54,114 @@
 
 </details>
 
+## Configuration Tables
+
+> [!IMPORTANT]
+> 真实运营前必须先替换 demo 配置。配置表会影响 SKU/ASIN 合并、利润判断、target ACOS、库存风险、SKU 别名归一和前台检查地区。
+
+| 配置文件 | 用途 | 最小必填 |
+| --- | --- | --- |
+| [`config/product_cost_config.xlsx`](config/templates/product_cost_config.example.xlsx) | 产品、成本、价格、利润、target ACOS、库存口径 | `marketplace`、`sku`、`asin`、`product_name`、`currency` |
+| [`config/sku_asin_map.xlsx`](config/templates/sku_asin_map.example.xlsx) | SKU/ASIN/站点基础映射 | `marketplace`、`sku`、`asin`、`product_name`、`currency` |
+| [`config/sku_alias_map.xlsx`](config/templates/sku_alias_map.example.xlsx) | 把广告或 ERP 里的别名 SKU 归一到正式 SKU | `marketplace`、`source_sku`、`canonical_sku`、`asin` |
+| [`config/product_line_keywords.json`](config/product_line_keywords.json) | 产品线关键词分层，影响搜索词相关性和否词判断 | `product_lines`、`keyword_levels` |
+| [`config/frontend_locations.json`](config/templates/frontend_locations.example.json) | UK/US/DE 前台检查使用的邮编和地区口径 | 站点键 + `postcode` |
+
+<details>
+<summary>product_cost_config.xlsx 字段说明</summary>
+
+Sheet 名必须是 `product_cost_config`。模板字段：
+
+```text
+marketplace	currency	sku	asin	product_name	source_row	selling_price	exchange_rate	purchase_cost_rmb	purchase_cost_local	first_leg_cost_rmb	first_leg_cost_local	packaging_cost_local_input	referral_fee	digital_tax	vat	storage_fee_estimate	return_fee_estimate	fba_fee	ad_fee_10pct	amazon_fees_excl_ads	landed_cost_excl_amazon	total_cost_before_ads	profit_before_ads	break_even_acos	suggested_target_acos	profit_after_10pct_ads	profit_margin_after_10pct_ads	roi_after_10pct_ads	chargeable_weight_g	volumetric_weight_g	actual_weight_g	length_cm	width_cm	height_cm	current_inventory	sea_inventory	inventory_note	mapping_status	mapping_note	cost_status
+```
+
+关键判断：
+
+1. `marketplace + sku + asin` 是核心合并键，不能随意换口径。
+2. `selling_price`、`purchase_cost_local`、`first_leg_cost_local`、`fba_fee`、`referral_fee` 会影响利润和 break-even ACOS。
+3. `suggested_target_acos` 会影响广告放量、降竞价和成本风险判断。填 0 或缺失会导致系统收紧建议。
+4. `current_inventory`、`sea_inventory`、`inventory_note` 会影响补货和库存风险提示。
+
+</details>
+
+<details>
+<summary>sku_asin_map.xlsx 字段说明</summary>
+
+模板字段：
+
+```text
+marketplace	sku	asin	product_name	currency
+```
+
+判断依据：
+
+1. 系统按 `marketplace + sku + asin` 合并广告、ERP、成本和历史数据。
+2. `product_name` 用于报告展示和产品线识别。
+3. `currency` 用于金额展示和站点口径。
+
+</details>
+
+<details>
+<summary>sku_alias_map.xlsx 字段说明</summary>
+
+模板字段：
+
+```text
+marketplace	source_sku	canonical_sku	asin	reason
+```
+
+使用规则：
+
+1. `source_sku` 是广告或 ERP 原始导出里出现的 SKU。
+2. `canonical_sku` 是正式配置表里的标准 SKU。
+3. 同一 `marketplace + source_sku + asin` 出现多行时，系统保留最后一条。
+4. `reason` 建议写清楚来源，例如 FBA SKU、ERP SKU、历史别名。
+
+</details>
+
+<details>
+<summary>product_line_keywords.json 和关键词 CSV 模板</summary>
+
+`product_line_keywords.json` 使用五层关键词：
+
+| 层级 | 用途 |
+| --- | --- |
+| `核心词` | 高相关购买意图词，优先控竞价和查 Listing，不能轻易否定 |
+| `可测词` | 相关长尾或相邻词，适合小预算测试 |
+| `泛词` | 大类词，未验证前低竞价保守跑 |
+| `低质词` | 弱相关或语义模糊词，观察或低价 |
+| `禁词` | 明显不相关词，达到点击或花费阈值后可否定精准 |
+
+CSV 模板 [`config/templates/product_keyword_rules.example.csv`](config/templates/product_keyword_rules.example.csv) 字段：
+
+```text
+product_line	level	keyword	notes
+```
+
+</details>
+
+<details>
+<summary>frontend_locations.json 字段说明</summary>
+
+模板结构：
+
+```json
+{
+  "UK": {"postcode": "SW1A 1AA", "location_label": "London demo location"},
+  "US": {"postcode": "10001", "location_label": "New York demo location"},
+  "DE": {"postcode": "10115", "location_label": "Berlin demo location"}
+}
+```
+
+风险判断：
+
+1. 邮编会影响 Amazon 前台价格、配送、Buy Box 和竞品展示。
+2. 前台检查是辅助证据，不能替代广告、ERP、成本和产品级窗口指标。
+3. 真实运营时应换成对应站点的目标配送地区。
+
+</details>
+
 Offline Amazon marketplace intelligence console for turning ads, sales, cost, SKU, and ASIN exports into operator-ready reports, action queues, and review workflows.
 
 This public repository is a clean demo snapshot. It shows the architecture, report workflow, and local operating console without exposing private store data, historical outputs, browser profiles, cookies, sessions, or real cost/SKU configuration files.
