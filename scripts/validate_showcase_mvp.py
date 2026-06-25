@@ -169,10 +169,10 @@ def _validate_latest_recommendations_ad_area(text: str, *, has_pending_ad_rows: 
         if "复制到广告后台" not in text:
             return fail("latest_recommendations.html missing copy area for pending ad rows")
     else:
-        if "待确认 0" not in text:
-            return fail("latest_recommendations.html missing compact zero-pending ad status")
-        if "复制到广告后台" in text:
-            return fail("latest_recommendations.html shows copy area when no pending ad rows")
+        has_empty_copy_state = "无待确认动作" in text or "当前没有需要复制执行的广告动作" in text
+        has_zero_pending_status = "待确认 0" in text or "待处理</span><strong>0</strong>" in text
+        if not (has_empty_copy_state or has_zero_pending_status):
+            return fail("latest_recommendations.html missing zero-pending ad copy status")
     return 0
 
 

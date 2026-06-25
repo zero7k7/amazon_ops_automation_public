@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,11 @@ class ManifestRow:
     columns: int
     asin_count: int
     created_at: str
+    target_conflict: str = ""
+    overwritten: int = 0
+    enhanced_detected_from: str = ""
+    enhanced_freshness: str = ""
+    diagnosis_usage: str = ""
 
 
 def now_str() -> str:
@@ -268,6 +274,65 @@ def domain_to_marketplace(url: str) -> str:
     return "UNKNOWN"
 
 
+def is_weak_amazon_com_marketplace(url: str) -> bool:
+    return "amazon.com" in str(url or "").lower()
+
+
+def marketplace_content_scores(text: str) -> Counter[str]:
+    value = f" {text.lower()} "
+    scores: Counter[str] = Counter()
+    if re.search(r"[äöüß]", value):
+        scores["DE"] += 4
+    patterns = {
+        "DE": [
+            r"\bfür\b",
+            r"\bküche\b",
+            r"\bmülleimer\b",
+            r"\bkäse\b",
+            r"\bteekiste\b",
+            r"\bteebeutel\b",
+            r"\bbambus\b",
+            r"\bholz\b",
+            r"\bedelstahl\b",
+            r"\btopfuntersetzer\b",
+            r"\bteeboxen\b",
+            r"\bmit\b",
+        ],
+        "UK": [
+            r"\bbin bags?\b",
+            r"\bkitchen bin\b",
+            r"\bbin liners?\b",
+            r"\bbrabantia\b",
+            r"\brubbish\b",
+            r"\blitres?\b",
+            r"\b\d+\s*l\b",
+        ],
+        "US": [
+            r"\bgallons?\b",
+            r"\bgal\b",
+            r"\btrash bags?\b",
+            r"\bgarbage bags?\b",
+            r"\btrash can\b",
+            r"\binch\b",
+        ],
+    }
+    for marketplace, marketplace_patterns in patterns.items():
+        for pattern in marketplace_patterns:
+            scores[marketplace] += len(re.findall(pattern, value))
+    return scores
+
+
+def confident_marketplace_from_scores(scores: Counter[str]) -> str:
+    if not scores:
+        return "UNKNOWN"
+    ranked = scores.most_common(2)
+    winner, top_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    if top_score >= 3 and top_score >= second_score + 2:
+        return winner
+    return "UNKNOWN"
+
+
 def extract_from_hyperlink_formula(formula: str) -> tuple[str, str]:
     """
     Returns (asin, marketplace).
@@ -287,6 +352,11 @@ def extract_from_hyperlink_formula(formula: str) -> tuple[str, str]:
         if lasin:
             asin = lasin.group(1).upper()
     return asin, mkt
+
+
+def extract_url_from_hyperlink_formula(formula: str) -> str:
+    m = HYPERLINK_RE.match(formula.strip())
+    return m.group("url") if m else ""
 
 
 def load_asin_marketplace_map() -> dict[str, str]:
@@ -328,7 +398,10 @@ def infer_enhanced_marketplaces_and_asin_count(path: Path, asin_map: dict[str, s
     Read first sheet only; parse ASIN column and hyperlink formulas.
     """
     wb = None
-    found_mkts: set[str] = set()
+    strong_domain_mkts: set[str] = set()
+    mapped_mkt_counts: Counter[str] = Counter()
+    weak_us_domain_count = 0
+    text_parts: list[str] = []
     asin_seen: set[str] = set()
     try:
         wb = load_workbook(path, read_only=True, data_only=False)
@@ -345,6 +418,8 @@ def infer_enhanced_marketplaces_and_asin_count(path: Path, asin_map: dict[str, s
         for i, row in enumerate(row_iter, start=1):
             if i > 3000:
                 break
+            if i <= 80:
+                text_parts.extend(str(c.value) for c in row if c.value is not None)
             if asin_idx >= len(row):
                 continue
             cell = row[asin_idx]
@@ -361,6 +436,10 @@ def infer_enhanced_marketplaces_and_asin_count(path: Path, asin_map: dict[str, s
             mkt = "UNKNOWN"
             if txt.startswith("=") and "HYPERLINK" in txt.upper():
                 asin, mkt = extract_from_hyperlink_formula(txt)
+                url = extract_url_from_hyperlink_formula(txt)
+                if is_weak_amazon_com_marketplace(url):
+                    weak_us_domain_count += 1
+                    mkt = "UNKNOWN"
             else:
                 m = ASIN_RE.search(txt)
                 if m:
@@ -374,14 +453,27 @@ def infer_enhanced_marketplaces_and_asin_count(path: Path, asin_map: dict[str, s
 
             if asin:
                 asin_seen.add(asin)
-                if mkt == "UNKNOWN":
-                    mkt = asin_map.get(asin, "UNKNOWN")
-                if mkt in {"UK", "US", "DE"}:
-                    found_mkts.add(mkt)
+                if mkt in {"UK", "DE"}:
+                    strong_domain_mkts.add(mkt)
+                mapped = asin_map.get(asin, "UNKNOWN")
+                if mapped in {"UK", "US", "DE"}:
+                    mapped_mkt_counts[mapped] += 1
     finally:
         if wb:
             wb.close()
-    return found_mkts, len(asin_seen)
+    if strong_domain_mkts:
+        return strong_domain_mkts, len(asin_seen)
+    content_winner = confident_marketplace_from_scores(marketplace_content_scores(" ".join(text_parts)))
+    if content_winner != "UNKNOWN":
+        return {content_winner}, len(asin_seen)
+    if mapped_mkt_counts:
+        winner, count = mapped_mkt_counts.most_common(1)[0]
+        total = sum(mapped_mkt_counts.values())
+        if count >= 2 and count / max(total, 1) >= 0.6:
+            return {winner}, len(asin_seen)
+    if weak_us_domain_count and not mapped_mkt_counts:
+        return {"US"}, len(asin_seen)
+    return set(), len(asin_seen)
 
 
 def build_enhanced_target(file_type: str, marketplace: str, date_range: str, period_type: str) -> Path:
@@ -457,6 +549,25 @@ def timestamped_path(base: Path, name: str) -> Path:
     return base / f"{stem}_{ts_compact()}{ext}"
 
 
+def safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned[:80] or "upload"
+
+
+def disambiguate_same_batch_target(target: Path, original: Path, reserved_targets: set[Path]) -> tuple[Path, str]:
+    resolved = target.resolve()
+    if resolved not in reserved_targets:
+        return target, ""
+    suffix = safe_filename_part(original.stem)
+    candidate = target.with_name(f"{target.stem}__{suffix}{target.suffix}")
+    index = 2
+    while candidate.resolve() in reserved_targets:
+        candidate = target.with_name(f"{target.stem}__{suffix}_{index}{target.suffix}")
+        index += 1
+    return candidate, f"same_batch_target_conflict:{target.name}"
+
+
 def safe_copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
@@ -516,6 +627,7 @@ def process_file(
     asin_map: dict[str, str],
     selected_ads: Path | None,
     selected_erp: Path | None,
+    reserved_targets: set[Path] | None = None,
 ) -> tuple[ManifestRow, int]:
     t0 = time.perf_counter()
     modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
@@ -537,6 +649,11 @@ def process_file(
     rows = 0
     cols = 0
     asin_count = 0
+    overwritten = 0
+    target_conflict = ""
+    enhanced_detected_from = ""
+    enhanced_freshness = ""
+    diagnosis_usage = ""
 
     print(f"正在处理：{path.name}")
     try:
@@ -565,6 +682,8 @@ def process_file(
                 if enhanced_header_info and enhanced_header_info.get("detected_from") == "header":
                     period_type = str(enhanced_header_info.get("format_type") or period_type)
                     detected_date_range = str(enhanced_header_info.get("detected_date_range") or detected_date_range)
+                    enhanced_detected_from = str(enhanced_header_info.get("detected_from") or "")
+                    enhanced_freshness = str(enhanced_header_info.get("freshness") or "")
 
         target = (
             build_enhanced_target_from_header(enhanced_header_info)
@@ -573,6 +692,8 @@ def process_file(
         )
         if target is None:
             target = build_target_path(detected_type, detected_marketplace if detected_marketplace != "MULTI" else "UK", detected_date_range, period_type, path)
+        if detected_type in {"traffic_sales", "search_query_performance"} and reserved_targets is not None:
+            target, target_conflict = disambiguate_same_batch_target(target, path, reserved_targets)
         target_path = str(target)
 
         if detected_type == "ads_report_all" and selected_ads and path != selected_ads:
@@ -593,11 +714,18 @@ def process_file(
         else:
             status = "imported"
 
+        if status == "imported" and detected_type in {"traffic_sales", "search_query_performance"}:
+            diagnosis_usage = "pending_report_refresh"
+
+        if reserved_targets is not None and status == "imported":
+            reserved_targets.add(target.resolve())
+
         if not dry_run:
             if status == "imported":
                 if detected_type == "ads_report_all":
                     bpath, b = backup_if_exists(target, dry_run=False)
                     backup_count += b
+                    overwritten = b
                     if bpath:
                         archive_path = bpath
                     if path.suffix.lower() == ".xlsx":
@@ -607,6 +735,7 @@ def process_file(
                 else:
                     bpath, b = backup_if_exists(target, dry_run=False)
                     backup_count += b
+                    overwritten = b
                     if bpath:
                         archive_path = bpath
                     safe_copy(path, target)
@@ -650,6 +779,11 @@ def process_file(
         columns=cols,
         asin_count=asin_count,
         created_at=created_at,
+        target_conflict=target_conflict,
+        overwritten=overwritten,
+        enhanced_detected_from=enhanced_detected_from,
+        enhanced_freshness=enhanced_freshness,
+        diagnosis_usage=diagnosis_usage,
     )
     return row, backup_count
 
@@ -679,6 +813,7 @@ def main() -> int:
     asin_map = load_asin_marketplace_map()
     manifest_rows: list[ManifestRow] = []
     backup_count_total = 0
+    reserved_targets: set[Path] = set()
 
     for p in snapshot:
         if time.perf_counter() - started > TOTAL_TIMEOUT_SEC:
@@ -709,6 +844,7 @@ def main() -> int:
             asin_map=asin_map,
             selected_ads=selected_ads,
             selected_erp=selected_erp,
+            reserved_targets=reserved_targets,
         )
         manifest_rows.append(row)
         backup_count_total += bc

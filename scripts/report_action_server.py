@@ -4,6 +4,7 @@ import cgi
 import html
 import json
 import mimetypes
+import os
 import re
 import secrets
 import select
@@ -89,6 +90,7 @@ REPORT_LINKS = {
     "de_report": f"{REPORT_BASE_URL}/de_report.html",
 }
 FRONTEND_QUEUE_ACCEPTANCE_THRESHOLD = 0.80
+ENABLE_BROWSER_FRONTEND_ENV = "AMAZON_OPS_ENABLE_BROWSER_FRONTEND"
 FEEDBACK_INPUT_FILENAME = "autoopt_feedback_input.json"
 FEEDBACK_AUDIT_PREFIX = "feedback_audit_log"
 SIDE_EFFECT_GET_PATHS = {
@@ -122,6 +124,47 @@ _LEGACY_FRONTEND_RETRY_FAILURES = (
     "前台数据重试失败：urllib 读取 Amazon 前台",
     "前台数据重试失败：",
 )
+
+
+def _browser_frontend_enabled() -> bool:
+    value = os.environ.get(ENABLE_BROWSER_FRONTEND_ENV, "").strip().lower()
+    if value in {"0", "false", "no", "off", "urllib"}:
+        return False
+    return True
+
+
+def _frontend_refresh_method() -> str:
+    return "chrome-cdp" if _browser_frontend_enabled() else "urllib"
+
+
+def _frontend_method_label() -> str:
+    return "Chrome CDP 后台" if _browser_frontend_enabled() else "urllib 静默"
+
+
+def _frontend_command(*, priority: str = "", require_competitor_samples: bool = False, search_policy: str = "ad-driven") -> list[str]:
+    method = _frontend_refresh_method()
+    command = [
+        sys.executable,
+        "scripts/run_frontend_checks.py",
+        "--method",
+        method,
+        "--timeout",
+        "30",
+        "--sleep",
+        "1.5",
+        "--search-policy",
+        search_policy,
+        "--only-stale",
+    ]
+    if method == "chrome-cdp":
+        command.extend(["--cdp-endpoint", CHROME_CDP_ENDPOINT, "--cdp-attempts", "1"])
+    else:
+        command.extend(["--retries", "3"])
+    if require_competitor_samples:
+        command.append("--require-competitor-samples")
+    if priority:
+        command.extend(["--priority", priority])
+    return command
 
 
 def _action_token_path() -> Path:
@@ -306,6 +349,85 @@ def _run_command(command: list[str], timeout: int) -> subprocess.CompletedProces
     return subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
 
 
+def _run_command_with_status(
+    command: list[str],
+    timeout: int,
+    *,
+    step: int,
+    total_steps: int,
+    message: str,
+) -> subprocess.CompletedProcess[str]:
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    deadline = time.monotonic() + timeout
+    last_status_at = 0.0
+    streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
+
+    def publish(force: bool = False) -> None:
+        nonlocal last_status_at
+        now = time.monotonic()
+        if not force and now - last_status_at < 1.0:
+            return
+        last_status_at = now
+        _sync_last_result(
+            {
+                **_last_result,
+                "running": True,
+                "message": message,
+                "detail": " ".join(command),
+                "step": step,
+                "total_steps": total_steps,
+                "elapsed_seconds": max(0, int(time.time() - float(_last_result.get("started_at_epoch") or time.time()))),
+                "stdout_tail": "".join(stdout_parts)[-4000:],
+                "stderr_tail": "".join(stderr_parts)[-4000:],
+            }
+        )
+
+    try:
+        while streams and process.poll() is None:
+            if time.monotonic() > deadline:
+                process.kill()
+                raise subprocess.TimeoutExpired(
+                    command,
+                    timeout,
+                    output="".join(stdout_parts),
+                    stderr="".join(stderr_parts),
+                )
+            readable, _, _ = select.select(streams, [], [], 0.25)
+            if not readable:
+                publish()
+                continue
+            for stream in readable:
+                line = stream.readline()
+                if not line:
+                    streams.remove(stream)
+                    continue
+                if stream is process.stdout:
+                    stdout_parts.append(line)
+                else:
+                    stderr_parts.append(line)
+                publish(force=True)
+        remaining_stdout, remaining_stderr = process.communicate(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        remaining_stdout, remaining_stderr = process.communicate()
+        stdout_parts.append(remaining_stdout or "")
+        stderr_parts.append(remaining_stderr or "")
+        raise subprocess.TimeoutExpired(command, timeout, output="".join(stdout_parts), stderr="".join(stderr_parts))
+    stdout_parts.append(remaining_stdout or "")
+    stderr_parts.append(remaining_stderr or "")
+    publish(force=True)
+    return subprocess.CompletedProcess(command, process.returncode or 0, "".join(stdout_parts), "".join(stderr_parts))
+
+
 def _run_frontend_command_with_progress(
     command: list[str],
     timeout: int,
@@ -373,13 +495,22 @@ def _start_chrome_cdp_if_needed(endpoint: str = CHROME_CDP_ENDPOINT, wait_second
         return False
     profile_dir = OUTPUT_DIR / "chrome_cdp_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        MAC_CHROME_APP,
+    chrome_args = [
         "--remote-debugging-port=9222",
         f"--user-data-dir={profile_dir}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--window-position=-32000,-32000",
+        "--window-size=1280,900",
         "about:blank",
+    ]
+    command = [
+        "/usr/bin/open",
+        "-g",
+        "-na",
+        "Google Chrome",
+        "--args",
+        *chrome_args,
     ]
     log_path = OUTPUT_DIR / "chrome_cdp_launch.log"
     log_file = log_path.open("a", encoding="utf-8")
@@ -773,16 +904,18 @@ def _has_competitor_samples(row: dict[str, object], minimum: int = 2) -> bool:
     return count >= minimum
 
 
-def _is_today_live_chrome_cdp(
+def _is_today_frontend_evidence(
     row: dict[str, object],
     today: str | None = None,
     *,
     require_competitor_samples: bool = False,
 ) -> bool:
     today = today or _today_iso()
+    method = str(row.get("frontend_check_method") or "").strip().lower()
+    accepted_methods = {"urllib", "chrome-cdp", "chrome", "chrome-persistent", "playwright"}
     is_today = (
         str(row.get("frontend_check_status") or "") == "已自动检查"
-        and str(row.get("frontend_check_method") or "") == "chrome-cdp"
+        and method in accepted_methods
         and _record_data_date(row) == today
         and not bool(row.get("frontend_cache_used"))
     )
@@ -791,6 +924,15 @@ def _is_today_live_chrome_cdp(
     if require_competitor_samples:
         return _has_competitor_samples(row)
     return True
+
+
+def _is_today_live_chrome_cdp(
+    row: dict[str, object],
+    today: str | None = None,
+    *,
+    require_competitor_samples: bool = False,
+) -> bool:
+    return _is_today_frontend_evidence(row, today, require_competitor_samples=require_competitor_samples)
 
 
 def _load_frontend_queue_rows(priority: str = "") -> list[dict[str, object]]:
@@ -831,7 +973,7 @@ def _frontend_refresh_needed_summary(priority: str = "", *, require_competitor_s
     stale: list[str] = []
     for row in rows:
         label = _frontend_label(row)
-        if _is_today_live_chrome_cdp(row, today, require_competitor_samples=require_competitor_samples):
+        if _is_today_frontend_evidence(row, today, require_competitor_samples=require_competitor_samples):
             fresh.append(label)
         else:
             stale.append(label)
@@ -868,7 +1010,7 @@ def _frontend_queue_status_summary(priority: str = "") -> dict[str, object]:
     today = _today_iso()
     for row in rows:
         label = _frontend_label(row)
-        is_live_checked = _is_today_live_chrome_cdp(row, today)
+        is_live_checked = _is_today_frontend_evidence(row, today)
         is_stability_passed = (
             is_live_checked
             and bool(row.get("frontend_stability_passed"))
@@ -915,7 +1057,7 @@ def _frontend_retry_status_message(summary: dict[str, object]) -> str:
     rate_text = f"{success_rate:.0%}"
     threshold_text = f"{threshold:.0%}"
     if refresh_total and skipped == refresh_total and not refreshed and not cache_used and not failed:
-        return f"无需刷新：{skipped}/{refresh_total} 个已有今日 Chrome CDP 前台证据；未访问 Amazon。"
+        return f"无需刷新：{skipped}/{refresh_total} 个已有今日前台证据；未访问 Amazon。"
     if refresh_total:
         prefix = "通过" if success_rate >= threshold else "未达标"
         message = (
@@ -1178,7 +1320,13 @@ def _run_daily_update() -> None:
     python = sys.executable
     try:
         _set_progress("运行 daily update", 1, 1, f"{python} scripts/run_daily_update.py")
-        completed = _run_command([python, "scripts/run_daily_update.py"], timeout=900)
+        completed = _run_command_with_status(
+            [python, "scripts/run_daily_update.py"],
+            timeout=900,
+            step=1,
+            total_steps=1,
+            message="运行 daily update",
+        )
         payload = _completed_payload(
             completed,
             "daily update 完成，报告已刷新。",
@@ -1206,31 +1354,17 @@ def _run_daily_update() -> None:
 
 def _run_p0_frontend_async() -> None:
     python = sys.executable
-    frontend_command = [
-        python,
-        "scripts/run_frontend_checks.py",
-        "--method",
-        "chrome-cdp",
-        "--cdp-endpoint",
-        CHROME_CDP_ENDPOINT,
-        "--cdp-attempts",
-        "1",
-        "--timeout",
-        "30",
-        "--sleep",
-        "1.5",
-        "--search-policy",
-        "always",
-        "--only-stale",
-        "--require-competitor-samples",
-        "--priority",
-        "P0",
-    ]
+    browser_enabled = _browser_frontend_enabled()
+    frontend_command = _frontend_command(
+        priority="P0",
+        require_competitor_samples=browser_enabled,
+        search_policy="always" if browser_enabled else "ad-driven",
+    )
     refresh_command = [python, "main.py", "--marketplace", "ALL"]
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     try:
-        needed_summary = _frontend_refresh_needed_summary(priority="P0", require_competitor_samples=True)
+        needed_summary = _frontend_refresh_needed_summary(priority="P0", require_competitor_samples=browser_enabled)
         total = int(needed_summary.get("frontend_queue_total") or 0)
         needed = int(needed_summary.get("frontend_refresh_needed_count") or 0)
         if total == 0:
@@ -1249,7 +1383,7 @@ def _run_p0_frontend_async() -> None:
             _sync_frontend_async_status(
                 {
                     "running": False,
-                    "message": f"P0 前台后台检查无需刷新：{total}/{total} 个已有今日 Chrome CDP 前台证据；未访问 Amazon。",
+                    "message": f"P0 前台后台检查无需刷新：{total}/{total} 个已有今日前台证据；未访问 Amazon。",
                     "returncode": 0,
                     "status_scope": "frontend_async",
                     "failure_mode": "frontend_refresh_not_needed",
@@ -1262,8 +1396,9 @@ def _run_p0_frontend_async() -> None:
                 }
             )
             return
-        _set_frontend_async_progress("检查本机 Chrome CDP 会话", 1, 2, CHROME_CDP_ENDPOINT)
-        if not _start_chrome_cdp_if_needed(CHROME_CDP_ENDPOINT):
+        if browser_enabled:
+            _set_frontend_async_progress("检查本机 Chrome CDP 会话", 1, 2, CHROME_CDP_ENDPOINT)
+        if browser_enabled and not _start_chrome_cdp_if_needed(CHROME_CDP_ENDPOINT):
             _sync_frontend_async_status(
                 {
                     "running": False,
@@ -1275,7 +1410,7 @@ def _run_p0_frontend_async() -> None:
                 }
             )
             return
-        _set_frontend_async_progress("P0 前台后台检查", 1, 2, " ".join(frontend_command))
+        _set_frontend_async_progress(f"P0 前台后台检查（{_frontend_method_label()}）", 1, 2, " ".join(frontend_command))
         frontend = _run_frontend_command_with_progress(
             frontend_command,
             timeout=600,
@@ -1352,36 +1487,21 @@ def _run_frontend_retry() -> None:
     python = sys.executable
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
-    chrome_step = (
-        "当前前台队列 Chrome CDP 缺口刷新",
-        [
-            python,
-            "scripts/run_frontend_checks.py",
-            "--method",
-            "chrome-cdp",
-            "--cdp-endpoint",
-            CHROME_CDP_ENDPOINT,
-            "--cdp-attempts",
-            "1",
-            "--timeout",
-            "30",
-            "--sleep",
-            "1.5",
-            "--search-policy",
-            "ad-driven",
-            "--only-stale",
-        ],
+    browser_enabled = _browser_frontend_enabled()
+    frontend_step = (
+        f"当前前台队列{_frontend_method_label()}缺口刷新",
+        _frontend_command(search_policy="ad-driven"),
         600,
     )
     refresh_step = ("刷新 HTML / Excel 报告", [python, "main.py", "--marketplace", "ALL"], 180)
-    steps = [chrome_step, refresh_step]
+    steps = [frontend_step, refresh_step]
     try:
         needed_summary = _frontend_refresh_needed_summary()
         total = int(needed_summary.get("frontend_queue_total") or 0)
         needed = int(needed_summary.get("frontend_refresh_needed_count") or 0)
         if total and needed == 0:
-            message = f"无需刷新：{total}/{total} 个已有今日 Chrome CDP 前台证据；未访问 Amazon。"
-            completed = subprocess.CompletedProcess([python, "scripts/run_frontend_checks.py", "--method", "chrome-cdp", "--only-stale"], 0, "", "")
+            message = f"无需刷新：{total}/{total} 个已有今日前台证据；未访问 Amazon。"
+            completed = subprocess.CompletedProcess([python, "scripts/run_frontend_checks.py", "--method", _frontend_refresh_method(), "--only-stale"], 0, "", "")
             summary = {**needed_summary, **_frontend_queue_status_summary()}
             _sync_last_result(
                 _completed_payload(
@@ -1399,8 +1519,9 @@ def _run_frontend_retry() -> None:
                 )
             )
             return
-        _set_progress("检查本机 Chrome CDP 会话", 1, len(steps), CHROME_CDP_ENDPOINT)
-        if not _start_chrome_cdp_if_needed(CHROME_CDP_ENDPOINT):
+        if browser_enabled:
+            _set_progress("检查本机 Chrome CDP 会话", 1, len(steps), CHROME_CDP_ENDPOINT)
+        if browser_enabled and not _start_chrome_cdp_if_needed(CHROME_CDP_ENDPOINT):
             combined = subprocess.CompletedProcess(
                 [python, "scripts/run_frontend_checks.py", "--method", "chrome-cdp"],
                 1,
@@ -1426,13 +1547,13 @@ def _run_frontend_retry() -> None:
             _set_progress(label, index, len(steps), " ".join(command))
             completed = (
                 _run_frontend_command_with_progress(command, timeout, step=index, total_steps=len(steps))
-                if label == chrome_step[0]
+                if label == frontend_step[0]
                 else _run_command(command, timeout=timeout)
             )
             stdout_parts.append(completed.stdout)
             stderr_parts.append(completed.stderr)
             if completed.returncode != 0:
-                if label == chrome_step[0]:
+                if label == frontend_step[0]:
                     frontend_failure = completed
                     continue
                 combined = subprocess.CompletedProcess(

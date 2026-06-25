@@ -955,8 +955,44 @@ def test_battle_diagnosis_uses_urllib_cache_path(monkeypatch, tmp_path) -> None:
     assert "chrome-persistent" not in calls[0]
 
 
-def test_frontend_retry_uses_chrome_cdp_single_live_refresh(monkeypatch, tmp_path) -> None:
+def test_chrome_cdp_launch_uses_background_offscreen_window(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
+    fake_chrome = tmp_path / "Google Chrome"
+    fake_chrome.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+    availability = iter([False, True])
+
+    class DummyProcess:
+        pass
+
+    def fake_available(endpoint: str = server.CHROME_CDP_ENDPOINT) -> bool:
+        try:
+            return next(availability)
+        except StopIteration:
+            return True
+
+    def fake_popen(command: list[str], **kwargs) -> DummyProcess:
+        calls.append(command)
+        return DummyProcess()
+
+    monkeypatch.setattr(server, "MAC_CHROME_APP", str(fake_chrome))
+    monkeypatch.setattr(server, "_chrome_cdp_available", fake_available)
+    monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
+
+    assert server._start_chrome_cdp_if_needed(wait_seconds=1) is True
+
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[:5] == ["/usr/bin/open", "-g", "-na", "Google Chrome", "--args"]
+    assert "--remote-debugging-port=9222" in command
+    assert any(part.startswith("--user-data-dir=") and "chrome_cdp_profile" in part for part in command)
+    assert "--window-position=-32000,-32000" in command
+    assert "--window-size=1280,900" in command
+
+
+def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1052,6 +1088,8 @@ def test_frontend_retry_uses_chrome_cdp_single_live_refresh(monkeypatch, tmp_pat
     assert frontend_command[:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "chrome-cdp"]
     assert "--cdp-attempts" in frontend_command
     assert frontend_command[frontend_command.index("--cdp-attempts") + 1] == "1"
+    assert "--cdp-endpoint" in frontend_command
+    assert "--retries" not in frontend_command
     assert "--search-policy" in frontend_command
     assert "ad-driven" in frontend_command
     assert "--only-stale" in frontend_command
@@ -1066,11 +1104,21 @@ def test_daily_update_success_starts_p0_frontend_async_without_blocking_status(m
     _patch_paths(monkeypatch, tmp_path)
     calls: list[list[str]] = []
 
-    def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    def fake_run_command(
+        command: list[str],
+        timeout: int,
+        *,
+        step: int,
+        total_steps: int,
+        message: str,
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
+        assert step == 1
+        assert total_steps == 1
+        assert message == "运行 daily update"
         return subprocess.CompletedProcess(command, 0, stdout="daily ok", stderr="")
 
-    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(server, "_run_command_with_status", fake_run_command)
     def fake_start_p0_frontend_async() -> dict[str, object]:
         payload = {
             "running": True,
@@ -1097,6 +1145,7 @@ def test_daily_update_success_starts_p0_frontend_async_without_blocking_status(m
 
 def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1224,6 +1273,7 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
 
 def test_p0_frontend_async_refreshes_today_product_page_without_competitor_samples(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1381,8 +1431,9 @@ def test_frontend_retry_skips_all_today_chrome_cdp_rows(monkeypatch, tmp_path) -
     assert "未访问 Amazon" in str(payload["message"])
 
 
-def test_frontend_retry_refuses_to_fake_live_read_when_cdp_unavailable(monkeypatch, tmp_path) -> None:
+def test_frontend_retry_can_use_urllib_when_browser_frontend_disabled(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv(server.ENABLE_BROWSER_FRONTEND_ENV, "0")
     calls: list[list[str]] = []
 
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -1390,6 +1441,11 @@ def test_frontend_retry_refuses_to_fake_live_read_when_cdp_unavailable(monkeypat
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(
+        server,
+        "_run_frontend_command_with_progress",
+        lambda command, timeout, *, step, total_steps, progress_writer=None: fake_run_command(command, timeout),
+    )
     monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: False)
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (server.OUTPUT_DIR / "latest_analysis.json").write_text(
@@ -1408,15 +1464,16 @@ def test_frontend_retry_refuses_to_fake_live_read_when_cdp_unavailable(monkeypat
     server._run_frontend_retry()
     payload = server._status_payload()
 
-    assert calls == []
-    assert payload["returncode"] == 1
+    assert len(calls) == 2
+    assert calls[0][:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "urllib"]
+    assert payload["returncode"] == 0
     assert payload["status_scope"] == "frontend_retry"
-    assert payload["failure_mode"] == "chrome_cdp_unavailable"
-    assert "本机 Chrome CDP 端口不可用" in str(payload["message"])
+    assert payload["failure_mode"] == "chrome_cdp_frontend_check_partial"
 
 
 def test_frontend_retry_refreshes_reports_after_partial_live_failure(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
     rows = [
