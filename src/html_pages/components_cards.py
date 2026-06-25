@@ -975,7 +975,7 @@ def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary
         '<div class="ad-section-header"><h2>产品级结论</h2><span class="status-badge status-muted">按产品决策</span></div>',
         '<p class="operation-section-note">只展示需要你判断、复查或拦截的产品。已执行产品不在这里占位，广告后台动作以下方广告工作台为准。</p>',
         '<div class="table-wrap"><table class="operation-table">',
-        '<thead><tr><th>产品</th><th>结论</th><th>关键数</th><th>动作边界</th><th>依据</th></tr></thead><tbody>',
+        '<thead><tr><th>产品</th><th>系统结论</th><th>关键数</th><th>动作边界</th><th>依据</th></tr></thead><tbody>',
     ]
     for row in display_rows[:limit]:
         marketplace = str(row.get("marketplace") or "")
@@ -1013,6 +1013,9 @@ def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary
         cost_text = "；".join(bit for bit in cost_bits if bit) or "当前无成本或库存拦截。"
         decision_reason = str(row.get("decision_reason") or row.get("fusion_reason") or "N/A")
         ad_diagnostic = str(row.get("ad_diagnostic_summary") or "")
+        fusion_diagnostic = str(row.get("fusion_issue_type") or "自动证据不足")
+        fusion_confidence = str(row.get("fusion_confidence") or "N/A")
+        fusion_reason = str(row.get("fusion_reason") or "")
         allowed_text = _action_list_text(row.get("today_allowed_actions"), action_labels)
         blocked_text = _action_list_text(row.get("today_blocked_actions"), blocked_labels)
         allowed_count = _action_item_count(row.get("today_allowed_actions"))
@@ -1037,6 +1040,8 @@ def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary
                     f'<p class="operation-main-reason">{_inline_markup(decision_reason)}</p>',
                     '<details class="operation-more">',
                     '<summary>展开证据</summary>',
+                    f'<p><strong>融合诊断</strong>：{html.escape(fusion_diagnostic)}；证据质量：{html.escape(fusion_confidence)}</p>',
+                    (f'<p><strong>融合原因</strong>：{_inline_markup(fusion_reason)}</p>' if fusion_reason else ''),
                     f'<p><strong>广告诊断</strong>：{_inline_markup(ad_diagnostic or decision_reason)}</p>',
                     f'<p><strong>前台证据</strong>：{_inline_markup(frontend_text)}</p>',
                     f'<p><strong>成本 / 库存</strong>：{_inline_markup(cost_text)}</p>',
