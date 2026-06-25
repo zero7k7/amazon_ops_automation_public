@@ -14,6 +14,14 @@ This repo is intended for three uses:
 
 It is not a hosted SaaS product, a managed Amazon API integration, or a plug-and-play decision engine. Real operating decisions require your own clean exports, cost tables, SKU/ASIN mapping, and marketplace-specific validation.
 
+## Platform Status
+
+This public demo is currently a macOS-first local version. The checked demo workflow is validated on macOS with a local Python environment.
+
+- Core report generation is plain Python and should be portable after dependency setup.
+- Local browser, clipboard, shell, and daily-ops conveniences are macOS-validated.
+- Windows users should treat this as source code plus a demo pipeline until Windows launch scripts and browser/clipboard fallbacks are separately verified.
+
 ## What It Does
 
 - Parses Amazon ads CSV files and ERP sales workbooks.
@@ -24,7 +32,7 @@ It is not a hosted SaaS product, a managed Amazon API integration, or a plug-and
 - Keeps optional Amazon frontend checks as best-effort enrichment, not a hard dependency.
 - Includes a local demo data generator so the project can run after clone.
 
-## Quick Start
+## Quick Start (macOS-validated)
 
 ```bash
 python3 -m venv .venv
