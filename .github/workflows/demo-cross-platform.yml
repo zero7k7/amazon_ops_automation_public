@@ -1,0 +1,54 @@
+name: Demo cross-platform validation
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  demo:
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python-version: ["3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Generate demo data
+        run: python scripts/setup_demo_data.py
+
+      - name: Run safe-run smoke test
+        run: python main.py --marketplace ALL --safe-run
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Run showcase validation
+        run: python scripts/validate_showcase_mvp.py
+
+      - name: Ensure generated demo artifacts are ignored
+        shell: bash
+        run: |
+          changed="$(git status --short --untracked-files=no)"
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            exit 1
+          fi
