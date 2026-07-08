@@ -2570,6 +2570,70 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_empty_report_page(self) -> None:
+        text = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Amazon Ops Public Console</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f8fb;
+      color: #142033;
+    }
+    main {
+      max-width: 760px;
+      margin: 72px auto;
+      padding: 0 20px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #d9e2ef;
+      border-radius: 8px;
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(20, 32, 51, 0.08);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 26px;
+      line-height: 1.25;
+    }
+    p {
+      margin: 10px 0;
+      line-height: 1.7;
+      color: #41516a;
+    }
+    code {
+      background: #eef3f9;
+      border-radius: 5px;
+      padding: 2px 6px;
+      color: #142033;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <h1>公共版当前没有报告数据</h1>
+      <p>测试商品和 demo 输出已经清除，服务可访问，但尚未生成正式报告。</p>
+      <p>正式使用时，把广告、ERP、成本和 SKU 映射文件放入 <code>data/inbox</code>，然后运行 <code>.venv_mac/bin/python scripts/run_daily_update.py</code>。</p>
+      <p>报告生成后，本页面会被新的 <code>latest_recommendations.html</code> 覆盖。</p>
+    </section>
+  </main>
+</body>
+</html>"""
+        body = text.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_file(self, path: Path) -> None:
         try:
             resolved = path.resolve()
@@ -2578,6 +2642,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"ok": False, "message": "forbidden"})
                 return
             if not resolved.exists() or not resolved.is_file():
+                if resolved == (output_root / "latest_recommendations.html").resolve():
+                    self._send_empty_report_page()
+                    return
                 self._send_json(404, {"ok": False, "message": "report file not found"})
                 return
             content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"

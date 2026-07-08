@@ -1023,6 +1023,62 @@ def test_report_file_response_disables_browser_cache(monkeypatch, tmp_path) -> N
     assert 'name="report-action-token"' in handler.wfile.getvalue().decode("utf-8")
 
 
+def test_missing_latest_report_returns_empty_state_page(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    sent_headers: dict[str, str] = {}
+
+    handler = object.__new__(server.Handler)
+    handler.wfile = io.BytesIO()
+    handler.headers = {}
+
+    def fake_send_response(status: int, message: str | None = None) -> None:
+        sent_headers[":status"] = str(status)
+
+    def fake_send_header(key: str, value: object) -> None:
+        sent_headers[key] = str(value)
+
+    monkeypatch.setattr(handler, "send_response", fake_send_response)
+    monkeypatch.setattr(handler, "send_header", fake_send_header)
+    monkeypatch.setattr(handler, "end_headers", lambda: None)
+
+    handler._send_file(server.OUTPUT_DIR / "latest_recommendations.html")
+
+    body = handler.wfile.getvalue().decode("utf-8")
+    assert sent_headers[":status"] == "200"
+    assert sent_headers["Content-Type"] == "text/html; charset=utf-8"
+    assert "公共版当前没有报告数据" in body
+    assert "B0B5HPKZKM" not in body
+    assert "B0H73CXQ5J" not in body
+    assert "B0BPC8WZL8" not in body
+
+
+def test_missing_non_latest_report_still_returns_404(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    sent_headers: dict[str, str] = {}
+
+    handler = object.__new__(server.Handler)
+    handler.wfile = io.BytesIO()
+    handler.headers = {}
+
+    def fake_send_response(status: int, message: str | None = None) -> None:
+        sent_headers[":status"] = str(status)
+
+    def fake_send_header(key: str, value: object) -> None:
+        sent_headers[key] = str(value)
+
+    monkeypatch.setattr(handler, "send_response", fake_send_response)
+    monkeypatch.setattr(handler, "send_header", fake_send_header)
+    monkeypatch.setattr(handler, "end_headers", lambda: None)
+
+    handler._send_file(server.OUTPUT_DIR / "dashboard.html")
+
+    body = handler.wfile.getvalue().decode("utf-8")
+    assert sent_headers[":status"] == "404"
+    assert "report file not found" in body
+
+
 def test_action_token_is_local_file_and_validates_header(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
 
