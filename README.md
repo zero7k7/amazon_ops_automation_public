@@ -25,6 +25,7 @@ This public demo is designed for local macOS and Windows basic end-to-end verifi
 - Core report generation is plain Python and does not require a browser.
 - Python 3.13 is supported through the `legacy-cgi` compatibility dependency used by the local upload service.
 - Windows launchers are included for daily report generation, local report buttons, and frontend retry sessions.
+- The GitHub Actions badge reflects the public demo smoke contract. Private business validation remains a separate local responsibility.
 - Live browser frontend checks remain optional. Amazon can still block or challenge browser reads, so browser evidence is never required for demo report generation.
 
 ## What It Does
@@ -138,6 +139,17 @@ Typical private inputs are:
 
 ## Validation
 
+The public GitHub Actions workflow runs on macOS and Windows with Python 3.13. Its release gate is intentionally scoped to the public demo:
+
+1. Install dependencies.
+2. Generate synthetic demo inputs with `scripts/setup_demo_data.py`.
+3. Run `main.py --marketplace ALL --safe-run`.
+4. Validate generated public demo outputs with `scripts/validate_public_demo_smoke.py`.
+5. Run the public smoke tests for launchers, demo data setup, missing-report handling, and public-ASIN panel regression.
+6. Confirm generated demo artifacts stay ignored by Git.
+
+This scope proves that a clean public clone can generate the demo console without private exports, browser sessions, cookies, local databases, or real SKU/ASIN configuration files.
+
 Run the test suite:
 
 ```bash
@@ -155,6 +167,7 @@ Run a report generation safe-run check:
 
 ```bash
 .venv/bin/python main.py --marketplace ALL --safe-run
+.venv/bin/python scripts/validate_public_demo_smoke.py
 ```
 
 Windows PowerShell:
@@ -162,9 +175,10 @@ Windows PowerShell:
 ```powershell
 $env:PYTHONUTF8="1"
 .\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
+.\.venv\Scripts\python.exe scripts\validate_public_demo_smoke.py
 ```
 
-Run the full showcase validation:
+Run the full showcase validation when you are changing report logic, HTML presentation, persistence, feedback review, frontend evidence, or business decision rules:
 
 ```bash
 .venv/bin/python scripts/validate_showcase_mvp.py
