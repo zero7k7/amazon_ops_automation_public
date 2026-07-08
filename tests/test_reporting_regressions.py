@@ -14385,21 +14385,16 @@ def test_frontend_status_summary_exposes_single_product_status_slot() -> None:
     assert "单产品按钮只检查当前 ASIN" in html
 
 
-def test_frontend_status_summary_exposes_public_demo_reverse_lookup_button_only_for_demo_rows() -> None:
+def test_frontend_status_summary_does_not_expose_ad_hoc_public_asin_panel() -> None:
     from src.generate_html_report import _render_frontend_status_summary
 
     demo_html = _render_frontend_status_summary(
         [{"marketplace": "US", "sku": "SKU-DEMO-US-001", "asin": "B0DEMOUS01"}]
     )
-    private_html = _render_frontend_status_summary(
-        [{"marketplace": "US", "sku": "SKU-REAL-001", "asin": "B0TEST1234"}]
-    )
 
-    assert "公开 ASIN 测试" in demo_html
-    assert "B084Z8CXXN" in demo_html
-    assert 'data-run-report-action="battle-diagnosis-one"' in demo_html
-    assert "公开 ASIN 测试" not in private_html
-    assert "B084Z8CXXN" not in private_html
+    assert "公开 ASIN 测试" not in demo_html
+    assert "B084Z8CXXN" not in demo_html
+    assert 'data-run-report-action="battle-diagnosis-one"' not in demo_html
 
 
 def test_frontend_check_queue_synthesizes_ad_hoc_asin_test_row() -> None:

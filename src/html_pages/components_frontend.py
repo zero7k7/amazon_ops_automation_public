@@ -6,14 +6,6 @@ from urllib.parse import urlencode
 from typing import Any
 
 
-PUBLIC_DEMO_REVERSE_LOOKUP_SAMPLE = {
-    "marketplace": "US",
-    "sku": "PUBLIC-LIVE-ASIN-SMOKE",
-    "asin": "B084Z8CXXN",
-    "label": "Amazon.com 公开 ASIN B084Z8CXXN",
-}
-
-
 def _short_status_text(value: object, limit: int = 42) -> str:
     text = " ".join(str(value or "").split())
     if len(text) <= limit:
@@ -491,38 +483,6 @@ def _frontend_queue_counts(shared: Any, rows: list[dict[str, str]]) -> dict[str,
     return counts
 
 
-def _has_public_demo_rows(rows: list[dict[str, str]]) -> bool:
-    return any(
-        str(row.get("sku") or "").startswith("SKU-DEMO-")
-        or str(row.get("asin") or "").strip().upper().startswith("B0DEMO")
-        for row in rows
-    )
-
-
-def _render_public_demo_reverse_lookup_test(rows: list[dict[str, str]]) -> str:
-    if not _has_public_demo_rows(rows):
-        return ""
-    sample = PUBLIC_DEMO_REVERSE_LOOKUP_SAMPLE
-    query = urlencode(
-        {
-            "marketplace": sample["marketplace"],
-            "sku": sample["sku"],
-            "asin": sample["asin"],
-        }
-    )
-    product_url = f"https://www.amazon.com/dp/{sample['asin']}"
-    return (
-        '<div class="frontend-status-card">'
-        '<span class="frontend-status-label">公开 ASIN 测试</span>'
-        '<div class="summary-action">'
-        f'<a class="button-link secondary" href="{html.escape(product_url)}" rel="noopener">打开测试商品</a>'
-        f'<button class="button-link secondary" type="button" data-run-report-action="battle-diagnosis-one" data-run-report-query="{html.escape(query)}">测试单品反查</button>'
-        "</div>"
-        f'<span class="frontend-retry-status subtle" data-run-report-status="battle-diagnosis-one">{html.escape(sample["label"])}。外部站点可能返回验证码或要求登录，结果只用于链路测试。</span>'
-        "</div>"
-    )
-
-
 def _render_frontend_status_summary(shared: Any, rows: list[dict[str, str]]) -> str:
     retry_html = (
         '<div class="summary-action frontend-cache-action frontend-refresh-panel">'
@@ -534,7 +494,6 @@ def _render_frontend_status_summary(shared: Any, rows: list[dict[str, str]]) -> 
         '<span class="frontend-status-label">运行状态</span>'
         '<span class="frontend-retry-status subtle" data-run-report-status="frontend-retry">待运行，点击后一次完成商品页和卖家精灵调查。</span>'
         '</div>'
-        f'{_render_public_demo_reverse_lookup_test(rows)}'
         '<div class="frontend-sellersprite-slot"></div>'
         '</div>'
         "</div>"
