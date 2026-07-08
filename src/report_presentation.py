@@ -1095,7 +1095,7 @@ def _growth_is_low_relevance(row: dict[str, object]) -> bool:
     tokens = [token for token in re.split(r"[^a-z0-9]+", term) if token]
     if len(tokens) <= 1:
         return True
-    if term in {"bread board", "cutting board", "chopping board"} and (_numeric_value(row.get("orders") or row.get("ad_orders")) or 0) <= 0:
+    if term in {"desk lamp", "notebook", "cable ties"} and (_numeric_value(row.get("orders") or row.get("ad_orders")) or 0) <= 0:
         return True
     return False
 
@@ -1110,20 +1110,17 @@ def _growth_is_broad_core_without_conversion(row: dict[str, object]) -> bool:
     tokens = [token for token in re.split(r"[^a-z0-9]+", term) if token]
     if len(tokens) > 3:
         return False
-    if not {"bread", "board"}.issubset(set(tokens)):
+    if not {"desk", "lamp"}.issubset(set(tokens)):
         return False
     intent_modifiers = {
-        "crumb",
-        "catcher",
-        "tray",
-        "chopping",
-        "wooden",
-        "bamboo",
-        "slicer",
-        "slicing",
-        "holder",
-        "box",
-        "kitchen",
+        "adjustable",
+        "clip",
+        "dimmable",
+        "led",
+        "office",
+        "reading",
+        "study",
+        "usb",
     }
     return not any(token in intent_modifiers for token in tokens)
 
@@ -1137,7 +1134,7 @@ def _growth_evidence_level(row: dict[str, object]) -> str:
     if any(token in text for token in ["核心词", "强相关", "高相关", "core"]):
         return "核心强相关"
     term = str(row.get("search_term_or_target") or row.get("search_term") or "").lower()
-    if "bread" in term and "board" in term and any(token in term for token in ["crumb", "catcher", "tray", "chopping", "cutting", "wooden", "bamboo", "slicer"]):
+    if "desk" in term and "lamp" in term and any(token in term for token in ["adjustable", "clip", "dimmable", "led", "office", "reading", "study", "usb"]):
         return "强意图长尾"
     if clicks > 0:
         return "有点击样本不足"

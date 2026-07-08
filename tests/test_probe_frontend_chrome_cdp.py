@@ -34,7 +34,7 @@ def test_chrome_cdp_probe_main_writes_20_run_report(monkeypatch, tmp_path, capsy
             "asin": "B0DEMOFRNT",
             "method": "chrome-cdp",
             "success": index != 16,
-            "title": "22x16x9cm Natural Bamboo Tea Organizer" if index != 16 else "",
+            "title": "Demo Adjustable Desk Lamp" if index != 16 else "",
             "price": "£17.89" if index != 16 else "",
             "location": "Aberdeen AB10 1" if index != 16 else "",
         }
@@ -93,7 +93,7 @@ def test_chrome_cdp_probe_recovers_readable_dom_after_navigation_timeout(monkeyp
             if script == "() => window.stop()":
                 return None
             return {
-                "title": "22x16x9cm Natural Bamboo Tea Organizer",
+                "title": "Demo Adjustable Desk Lamp",
                 "price": "£17.89",
                 "rating": "4.2 out of 5 stars",
                 "reviews": "(38)",
@@ -203,7 +203,7 @@ def test_chrome_cdp_probe_clicks_continue_shopping_gate(monkeypatch) -> None:
                     "url": self.url,
                 }
             return {
-                "title": "22x16x9cm Natural Bamboo Tea Organizer",
+                "title": "Demo Adjustable Desk Lamp",
                 "price": "£17.89",
                 "rating": "4.2 out of 5 stars",
                 "reviews": "(38)",
@@ -295,7 +295,7 @@ def test_chrome_cdp_probe_uses_verified_location_setup_note(monkeypatch) -> None
             if script == probe.DISMISS_COOKIE_BANNER_JS:
                 return False
             return {
-                "title": "22x16x9cm Natural Bamboo Tea Organizer",
+                "title": "Demo Adjustable Desk Lamp",
                 "price": "£17.89",
                 "rating": "4.2 out of 5 stars",
                 "reviews": "(38)",

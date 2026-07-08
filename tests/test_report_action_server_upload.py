@@ -572,7 +572,7 @@ def test_append_ad_completion_feedback_writes_required_fields_and_dedupes(monkey
         "sku": "SKU-1",
         "asin": "B0TEST1234",
         "product_name": "Test product",
-        "search_term_or_target": "bamboo board",
+        "search_term_or_target": "led desk lamp",
         "suggested_action": "降竞价10%-20%",
         "manual_action_taken": "降竞价 10%-20%",
         "confirmed_at": "2026-06-18 09:30:00",
@@ -595,7 +595,7 @@ def test_append_ad_completion_feedback_writes_required_fields_and_dedupes(monkey
     assert saved["report_date"] == "2026-06-17"
     assert saved["next_review"] == "2026-06-21"
     assert saved["cooldown_days"] == 7
-    assert saved["search_term_or_target"] == "bamboo board"
+    assert saved["search_term_or_target"] == "led desk lamp"
     audit_rows = []
     for audit_path in server.OUTPUT_DIR.glob("feedback_audit_log_*.json"):
         audit_rows.extend(json.loads(audit_path.read_text(encoding="utf-8")))
@@ -617,7 +617,7 @@ def test_append_ad_completion_feedback_rejects_observation_actions(monkeypatch, 
                 "marketplace": "UK",
                 "sku": "SKU-1",
                 "asin": "B0TEST1234",
-                "search_term_or_target": "tea caddy",
+                "search_term_or_target": "demo notebook",
                 "suggested_action": "观察",
                 "manual_action_taken": "观察",
             }
@@ -646,7 +646,7 @@ def test_ad_completion_feedback_round_trip_removes_copy_row_and_writes_keyword_r
         "sku": "SKU-1",
         "asin": "B0TEST1234",
         "product_name": "Test product",
-        "search_term_or_target": "bamboo board",
+        "search_term_or_target": "led desk lamp",
         "campaign": "Manual Exact",
         "match_type_or_targeting": "exact",
         "suggested_action": "降竞价10%-20%",
@@ -702,7 +702,7 @@ def test_ad_completion_feedback_round_trip_removes_copy_row_and_writes_keyword_r
     review_rows = json.loads(review_path.read_text(encoding="utf-8"))
 
     assert any(
-        row.get("search_term_or_target") == "bamboo board"
+        row.get("search_term_or_target") == "led desk lamp"
         and row.get("normalized_action") == "bid_down"
         and row.get("action_id") == feedback["action_id"]
         for row in review_rows
@@ -722,10 +722,10 @@ def test_growth_test_completion_preserves_experiment_fields_and_writes_review(mo
     feedback, appended, row_count = server.append_ad_completion_feedback(
         {
             "marketplace": "UK",
-            "sku": "SKU-DEMO-BOARD-01",
-            "asin": "B0DEMOBRD1",
-            "product_name": "Bread board",
-            "search_term_or_target": "bread chopping board",
+            "sku": "SKU-DEMO-LAMP-01",
+            "asin": "B0DEMOLMP1",
+            "product_name": "Demo desk lamp",
+            "search_term_or_target": "adjustable desk lamp",
             "suggested_action": "推广实验",
             "manual_action_taken": "推广实验",
             "confirmed_at": "2026-06-18 09:30:00",
@@ -765,7 +765,7 @@ def test_growth_test_completion_preserves_experiment_fields_and_writes_review(mo
 
     review_rows = json.loads((server.OUTPUT_DIR / "keyword_action_review_20260617.json").read_text(encoding="utf-8"))
     assert any(
-        row.get("search_term_or_target") == "bread chopping board"
+        row.get("search_term_or_target") == "adjustable desk lamp"
         and row.get("normalized_action") == "growth_test"
         and row.get("action_id") == feedback["action_id"]
         for row in review_rows
@@ -784,9 +784,9 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
 
     base = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-BOARD-01",
-        "asin": "B0DEMOBRD1",
-        "product_name": "Bread board",
+        "sku": "SKU-DEMO-LAMP-01",
+        "asin": "B0DEMOLMP1",
+        "product_name": "Demo desk lamp",
         "suggested_action": "小预算试投",
         "manual_action_taken": "小预算试投",
         "confirmed_at": "2026-06-18 09:30:00",
@@ -804,8 +804,8 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
     feedbacks, appended_flags, row_count = server.append_ad_completion_feedback_batch(
         {
             "actions": [
-                {**base, "search_term_or_target": "bread chopping board"},
-                {**base, "search_term_or_target": "bread board with crumb catcher"},
+                {**base, "search_term_or_target": "adjustable desk lamp"},
+                {**base, "search_term_or_target": "dimmable desk lamp"},
             ]
         }
     )
@@ -816,8 +816,8 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
     saved_payload = json.loads((server.OUTPUT_DIR / "autoopt_feedback_input.json").read_text(encoding="utf-8"))
     assert len(saved_payload["rows"]) == 2
     assert {row["search_term_or_target"] for row in saved_payload["rows"]} == {
-        "bread chopping board",
-        "bread board with crumb catcher",
+        "adjustable desk lamp",
+        "dimmable desk lamp",
     }
 
     payload = autoopt_feedback.build_autoopt_payload(
@@ -836,13 +836,13 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
 
     review_rows = json.loads((server.OUTPUT_DIR / "keyword_action_review_20260617.json").read_text(encoding="utf-8"))
     reviewed_terms = {row.get("search_term_or_target") for row in review_rows if row.get("normalized_action") == "growth_test"}
-    assert {"bread chopping board", "bread board with crumb catcher"} <= reviewed_terms
+    assert {"adjustable desk lamp", "dimmable desk lamp"} <= reviewed_terms
     memory_terms = {
         row.get("search_term_or_target")
         for row in payload.get("keyword_strategy_memory", [])
         if row.get("normalized_action") == "growth_test"
     }
-    assert {"bread chopping board", "bread board with crumb catcher"} <= memory_terms
+    assert {"adjustable desk lamp", "dimmable desk lamp"} <= memory_terms
 
 
 def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monkeypatch, tmp_path) -> None:
@@ -857,9 +857,9 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
 
     base = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-BOARD-01",
-        "asin": "B0DEMOBRD1",
-        "product_name": "Bread board",
+        "sku": "SKU-DEMO-LAMP-01",
+        "asin": "B0DEMOLMP1",
+        "product_name": "Demo desk lamp",
         "suggested_action": "小预算试投",
         "manual_action_taken": "小预算试投",
         "confirmed_at": "2026-06-18 09:30:00",
@@ -871,8 +871,8 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
         "suggested_bid_max": "£0.38",
     }
     actions = [
-        {**base, "search_term_or_target": "bread chopping board"},
-        {**base, "search_term_or_target": "bread board with crumb catcher"},
+        {**base, "search_term_or_target": "adjustable desk lamp"},
+        {**base, "search_term_or_target": "dimmable desk lamp"},
     ]
     feedbacks, appended_flags, row_count = server.append_ad_completion_feedback_batch({"actions": actions})
 
@@ -884,8 +884,8 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
     assert removed_count == 2
     assert remaining_count == 0
     assert {row["search_term_or_target"] for row in removed_rows} == {
-        "bread chopping board",
-        "bread board with crumb catcher",
+        "adjustable desk lamp",
+        "dimmable desk lamp",
     }
     saved_payload = json.loads((server.OUTPUT_DIR / "autoopt_feedback_input.json").read_text(encoding="utf-8"))
     assert saved_payload["rows"] == []

@@ -365,12 +365,9 @@ def _frontend_core_keyword(shared: Any, marketplace: str, product_name: str, sku
         matches.append((score, line))
     if not matches:
         fallback = {
-            "面包板": "bread cutting board",
-            "竹菜板": "bamboo cutting board",
-            "热垫": "trivet",
-            "垃圾袋": "trash bags",
-            "茶叶盒": "tea box",
-            "垃圾桶": "trash can",
+            "demo desk lamp": "led desk lamp",
+            "demo notebook": "spiral notebook",
+            "demo cable ties": "reusable cable ties",
         }
         return fallback.get(hint, "")
     line = sorted(matches, key=lambda item: item[0])[0][1]

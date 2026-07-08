@@ -117,7 +117,7 @@ def test_enhanced_marketplace_does_not_trust_amazon_com_link_when_content_is_loc
         [
             [
                 '=HYPERLINK("https://amazon.com/dp/B0UKTEST01", "B0UKTEST01")',
-                "Heavy Duty Bin Bags 90L for Kitchen Bin and Brabantia Bin Liners",
+                "Demo Desk Organiser Colour Centre UK",
                 0.1,
                 0.1,
                 10,
@@ -136,7 +136,7 @@ def test_enhanced_marketplace_does_not_trust_amazon_com_link_when_content_is_loc
         [
             [
                 '=HYPERLINK("https://amazon.com/dp/B0DETEST01", "B0DETEST01")',
-                "Teebox Bambus für Teebeutel Küche Holz mit Sichtfenster",
+                "Demo Schreibtischlampe für Büro und Arbeit mit Farbe",
                 0.1,
                 0.1,
                 10,
@@ -155,7 +155,7 @@ def test_enhanced_marketplace_does_not_trust_amazon_com_link_when_content_is_loc
         [
             [
                 '=HYPERLINK("https://amazon.com/dp/B0USTEST01", "B0USTEST01")',
-                "Heavy Duty 23 Gallon Trash Bags for Garbage Can",
+                "Demo Desk Organizer Color Center 12 Inch US",
                 0.1,
                 0.1,
                 10,

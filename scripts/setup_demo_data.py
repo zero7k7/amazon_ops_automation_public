@@ -17,7 +17,7 @@ PRODUCTS = [
         "marketplace_raw": "AMAZON.COM",
         "sku": "SKU-DEMO-US-001",
         "asin": "B0DEMOUS01",
-        "product_name": "Demo storage bin",
+        "product_name": "Demo desk lamp",
         "currency": "USD",
         "unit_cost": 4.20,
         "shipping_cost": 1.10,
@@ -26,7 +26,7 @@ PRODUCTS = [
         "profit_before_ads_per_unit": 6.30,
         "current_inventory": 120,
         "sea_inventory": 80,
-        "search_terms": ["demo storage bin", "plastic storage box"],
+        "search_terms": ["demo desk lamp", "led desk lamp"],
     },
     {
         "marketplace": "UK",
@@ -34,7 +34,7 @@ PRODUCTS = [
         "marketplace_raw": "AMAZON_CO_UK",
         "sku": "SKU-DEMO-UK-001",
         "asin": "B0DEMOUK01",
-        "product_name": "Demo tea caddy",
+        "product_name": "Demo notebook",
         "currency": "GBP",
         "unit_cost": 3.10,
         "shipping_cost": 0.80,
@@ -43,7 +43,7 @@ PRODUCTS = [
         "profit_before_ads_per_unit": 5.20,
         "current_inventory": 95,
         "sea_inventory": 40,
-        "search_terms": ["demo tea caddy", "tea storage box"],
+        "search_terms": ["demo notebook", "spiral notebook"],
     },
     {
         "marketplace": "DE",
@@ -51,7 +51,7 @@ PRODUCTS = [
         "marketplace_raw": "AMAZON_DE",
         "sku": "SKU-DEMO-DE-001",
         "asin": "B0DEMODE01",
-        "product_name": "Demo cable clips",
+        "product_name": "Demo cable ties",
         "currency": "EUR",
         "unit_cost": 2.40,
         "shipping_cost": 0.70,
@@ -60,7 +60,7 @@ PRODUCTS = [
         "profit_before_ads_per_unit": 4.10,
         "current_inventory": 150,
         "sea_inventory": 60,
-        "search_terms": ["demo cable clips", "cable organiser clips"],
+        "search_terms": ["demo cable ties", "reusable cable ties"],
     },
 ]
 

@@ -13,7 +13,7 @@ import pandas as pd
 from .parse_erp_sales import load_erp_report
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INVENTORY_PATH = Path("/Users/lynn/Downloads/亚马逊数据/库存.xlsx")
+DEFAULT_INVENTORY_PATH = ROOT / "data" / "inventory.xlsx"
 OUTPUT_DIR = ROOT / "data" / "output"
 RAW_ERP_DIR = ROOT / "data" / "raw_erp"
 
@@ -22,11 +22,9 @@ INBOUND_DAYS = {"UK": 70, "DE": 70, "US": 40}
 TARGET_BUFFER_DAYS = 30
 
 PRODUCT_ALIASES = {
-    "茶叶盒": ["六格茶叶盒", "tea box", "tea organizer", "tea organiser"],
-    "菜板3": ["竹菜板3片", "菜板3", "chopping boards set of 3"],
-    "热垫1": ["热垫1", "trivet"],
-    "热垫4": ["热垫4"],
-    "面包板": ["面包板", "bread board"],
+    "demo_desk_lamp": ["demo desk lamp", "led desk lamp", "reading lamp"],
+    "demo_notebook": ["demo notebook", "spiral notebook", "ruled notebook"],
+    "demo_cable_ties": ["demo cable ties", "reusable cable ties", "wire ties"],
 }
 
 _RAW_ERP_INVENTORY_CACHE: dict[str, pd.DataFrame] = {}

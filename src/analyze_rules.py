@@ -32,22 +32,18 @@ NEGATIVE_KEYWORD_PATTERNS = [
     "picnic",
 ]
 CORE_RELEVANT_TERM_PATTERNS = [
-    "bread board",
-    "bread cutting board",
-    "crumb catcher",
-    "cutting board",
-    "bamboo cutting board",
-    "trivet",
-    "hot pans",
-    "bamboo trivet",
-    "bin bags",
-    "trash bags",
-    "rubbish bags",
-    "tea box",
-    "tea organizer",
+    "desk lamp",
+    "led desk lamp",
+    "reading lamp",
+    "notebook",
+    "spiral notebook",
+    "ruled notebook",
+    "cable ties",
+    "reusable cable ties",
+    "wire ties",
 ]
-COMPETITOR_OR_BRAND_PATTERNS = ["piklohas", "brabantia"]
-BROAD_GENERIC_PATTERNS = ["wood", "bamboo", "kitchen", "board", "bags", "storage"]
+COMPETITOR_OR_BRAND_PATTERNS = ["demo competitor", "example brand"]
+BROAD_GENERIC_PATTERNS = ["office", "lamp", "notebook", "stationery", "cable", "wire", "desk"]
 IRRELEVANT_TERM_MIN_CLICKS = 3
 IRRELEVANT_TERM_MIN_SPEND = 1.5
 SECTION_LIMITS = {

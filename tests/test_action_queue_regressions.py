@@ -30,7 +30,7 @@ def search_item(target: str, clicks: int, spend: float, **evidence: object) -> d
 
 
 def test_bid_down_copy_line_never_says_price_down() -> None:
-    row = _search_term_action_from_item(search_item("bamboo cutting board", 12, 6), "US")
+    row = _search_term_action_from_item(search_item("led desk lamp", 12, 6), "US")
 
     assert row["suggested_action"] == "降竞价10%-20%"
     assert row["copy_action_line"] == "建议降竞价 10%-15%"

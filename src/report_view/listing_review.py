@@ -99,18 +99,12 @@ def _recent_7d_listing_metrics(shared: Any, evidence: str) -> tuple[float | None
 
 def _product_line_hint(shared: Any, product_name: object, sku: object = "", asin: object = "") -> str:
     text = f"{product_name or ''} {sku or ''} {asin or ''}".lower()
-    if any(token in text for token in ["面包", "bread"]):
-        return "面包板"
-    if any(token in text for token in ["竹菜板", "cutting", "chopping"]):
-        return "竹菜板"
-    if any(token in text for token in ["热垫", "trivet"]):
-        return "热垫"
-    if any(token in text for token in ["垃圾袋", "trash", "bag"]):
-        return "垃圾袋"
-    if any(token in text for token in ["茶叶", "tea", "teebeutel"]):
-        return "茶叶盒"
-    if any(token in text for token in ["垃圾桶", "bin"]):
-        return "垃圾桶"
+    if any(token in text for token in ["desk lamp", "led lamp", "reading lamp"]):
+        return "demo desk lamp"
+    if any(token in text for token in ["notebook", "spiral", "journal"]):
+        return "demo notebook"
+    if any(token in text for token in ["cable ties", "wire ties", "cable management"]):
+        return "demo cable ties"
     return "该产品"
 
 

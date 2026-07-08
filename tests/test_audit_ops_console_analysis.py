@@ -218,7 +218,7 @@ def test_audit_fails_sample_light_zero_order_scale_action(tmp_path) -> None:
             "marketplace": "UK",
             "sku": "SKU-AD",
             "asin": "B0AD",
-            "search_term_or_target": "bamboo board",
+            "search_term_or_target": "led desk lamp",
             "suggested_action": "加价 5%-10%",
             "classification_reason": "相关但未验证",
             "reason": "小样本无成交",

@@ -6,6 +6,8 @@ Offline Amazon marketplace intelligence console for turning ads, sales, cost, SK
 
 This public repository is a clean demo snapshot. It shows the architecture, report workflow, and local operating console without exposing private store data, historical outputs, browser profiles, cookies, sessions, or real cost/SKU configuration files.
 
+Release note: public releases should be prepared from this public branch or from a fresh sanitized export. Do not merge a private operations branch into the public repository, because private Git history can retain removed SKU, ASIN, cost, and report artifacts.
+
 ## Repository Scope
 
 This repo is intended for three uses:
@@ -101,6 +103,8 @@ data/raw_erp/sales_report_all.xlsx
 These files are ignored by Git. The script refuses to overwrite existing files unless `--force` is passed.
 
 The generated demo data is synthetic. It is only useful for checking that the pipeline runs and that the report UI renders.
+
+The demo products intentionally use generic office examples. They are placeholders for validation only and should not be treated as market research or product recommendations.
 
 ## Use With Your Own Store
 

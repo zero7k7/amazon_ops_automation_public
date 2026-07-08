@@ -10,48 +10,48 @@
   },
   "product_lines": [
     {
-      "product_line": "demo_storage_bin",
-      "name_patterns": ["demo storage bin", "storage bin", "plastic storage box"],
+      "product_line": "demo_desk_lamp",
+      "name_patterns": ["demo desk lamp", "desk lamp", "led desk lamp"],
       "keyword_levels": {
-        "核心词": ["storage bin", "plastic storage box", "storage container"],
-        "可测词": ["small storage bin", "storage box with lid", "office storage box"],
-        "泛词": ["storage", "organizer", "box"],
-        "低质词": ["decorative basket", "display box"],
-        "禁词": ["food bag", "trash bag", "laundry basket"]
+        "核心词": ["desk lamp", "led desk lamp", "reading lamp"],
+        "可测词": ["study lamp", "office desk light", "adjustable desk lamp"],
+        "泛词": ["lamp", "lighting", "office light"],
+        "低质词": ["floor lamp", "lava lamp"],
+        "禁词": ["phone case", "garden light", "makeup mirror"]
       },
-      "core_keywords": ["storage bin", "plastic storage box", "storage container"],
-      "broad_keywords": ["storage", "organizer", "box"],
-      "irrelevant_keywords": ["food bag", "trash bag", "laundry basket"],
+      "core_keywords": ["desk lamp", "led desk lamp", "reading lamp"],
+      "broad_keywords": ["lamp", "lighting", "office light"],
+      "irrelevant_keywords": ["phone case", "garden light", "makeup mirror"],
       "competitor_keywords": []
     },
     {
-      "product_line": "demo_tea_caddy",
-      "name_patterns": ["demo tea caddy", "tea caddy", "tea storage box"],
+      "product_line": "demo_notebook",
+      "name_patterns": ["demo notebook", "notebook", "spiral notebook"],
       "keyword_levels": {
-        "核心词": ["tea caddy", "tea storage box", "tea bag organizer"],
-        "可测词": ["wooden tea box", "tea organizer with lid", "tea bag storage"],
-        "泛词": ["kitchen storage", "organizer", "wooden box"],
-        "低质词": ["display box", "gift box"],
-        "禁词": ["coffee capsule", "spice rack", "jewellery box"]
+        "核心词": ["notebook", "spiral notebook", "ruled notebook"],
+        "可测词": ["study notebook", "college ruled notebook", "work notebook"],
+        "泛词": ["stationery", "journal", "paper"],
+        "低质词": ["greeting card", "printer paper"],
+        "禁词": ["laptop stand", "tablet case", "photo frame"]
       },
-      "core_keywords": ["tea caddy", "tea storage box", "tea bag organizer"],
-      "broad_keywords": ["kitchen storage", "organizer", "wooden box"],
-      "irrelevant_keywords": ["coffee capsule", "spice rack", "jewellery box"],
+      "core_keywords": ["notebook", "spiral notebook", "ruled notebook"],
+      "broad_keywords": ["stationery", "journal", "paper"],
+      "irrelevant_keywords": ["laptop stand", "tablet case", "photo frame"],
       "competitor_keywords": []
     },
     {
-      "product_line": "demo_cable_clips",
-      "name_patterns": ["demo cable clips", "cable clips", "cable organiser clips", "cable organizer clips"],
+      "product_line": "demo_cable_ties",
+      "name_patterns": ["demo cable ties", "cable ties", "reusable cable ties"],
       "keyword_levels": {
-        "核心词": ["cable clips", "cable organizer clips", "cable organiser clips"],
-        "可测词": ["desk cable clips", "adhesive cable clips", "wire clips"],
-        "泛词": ["cable management", "desk organizer", "clips"],
-        "低质词": ["decorative clips", "paper clips"],
-        "禁词": ["hair clips", "bag clips", "binder clips"]
+        "核心词": ["cable ties", "reusable cable ties", "wire ties"],
+        "可测词": ["desk cable ties", "hook loop cable ties", "cable management ties"],
+        "泛词": ["cable management", "wire organizer", "ties"],
+        "低质词": ["paper fasteners", "decorative clips"],
+        "禁词": ["hair ties", "shoe laces", "binder clips"]
       },
-      "core_keywords": ["cable clips", "cable organizer clips", "cable organiser clips"],
-      "broad_keywords": ["cable management", "desk organizer", "clips"],
-      "irrelevant_keywords": ["hair clips", "bag clips", "binder clips"],
+      "core_keywords": ["cable ties", "reusable cable ties", "wire ties"],
+      "broad_keywords": ["cable management", "wire organizer", "ties"],
+      "irrelevant_keywords": ["hair ties", "shoe laces", "binder clips"],
       "competitor_keywords": []
     }
   ]

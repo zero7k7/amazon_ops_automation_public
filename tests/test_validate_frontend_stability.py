@@ -7,7 +7,7 @@ def _attempt(index: int, *, success: bool = True) -> dict[str, object]:
         "marketplace": "UK",
         "asin": "B0DEMOFRNT",
         "success": success,
-        "title": "22x16x9cm Natural Bamboo Tea Organizer",
+        "title": "Demo Adjustable Desk Lamp",
         "price": "£17.89",
         "rating": "4.2 out of 5 stars",
         "reviews": "(38)",

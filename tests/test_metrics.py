@@ -45,7 +45,7 @@ class MetricsTestCase(unittest.TestCase):
                     "asin": "B0TEST0001",
                     "product_name": "Test product",
                     "campaign_name": "Campaign",
-                    "search_term": "bamboo board",
+                    "search_term": "led desk lamp",
                     "impressions": 100,
                     "clicks": clicks,
                     "spend": 5.0,

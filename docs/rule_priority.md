@@ -20,7 +20,7 @@
 
 - `autoopt_feedback_input.json` 中的 `manual_root_cause` 和 `manual_action_taken` 优先于系统的 Listing 猜测。
 - 同一产品再次触发类似问题时，应优先引用人工确认原因。
-- 例如“新品评分低；价格无优势；已调价到 24.99”应进入 `manual_learning_log_YYYYMMDD.json`，后续报告只复查效果，不重复泛化成 Listing 问题。
+- 例如“demo 产品已人工确认页面承接问题，并完成一次价格或 Listing 调整”应进入 `manual_learning_log_YYYYMMDD.json`，后续报告只复查效果，不重复泛化成 Listing 问题。
 
 ## 4. 已执行冷却优先于今日动作
 
