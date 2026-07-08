@@ -38,6 +38,7 @@ This public demo is designed for local macOS and Windows basic end-to-end verifi
 - Includes the public-safe version of the current operations workflow: market evidence completeness checks, SellerSprite-style enrichment hooks, action review, keyword review, and daily update validation.
 - Keeps optional Amazon frontend checks as best-effort enrichment, not a hard dependency.
 - Includes a local demo data generator so the project can run after clone.
+- Keeps SellerSprite-style market research as offline demo fixtures in the public release. Public demo data covers reverse-ASIN keywords, competitor discovery, and history snapshots without bundling a SellerSprite account, login cookie, browser profile, or live scraping session.
 
 ## Quick Start
 
@@ -112,6 +113,8 @@ These files are ignored by Git. The script refuses to overwrite existing files u
 The generated demo data is synthetic. It covers the public report path for ads, ERP sales, cost mapping, Seller Central custom analytics, frontend evidence cache, SellerSprite-style enrichment, competitor discovery, history trend snapshots, and executed feedback review.
 
 The demo products use public Amazon sample ASINs with synthetic ads, ERP, cost, SellerSprite-style, frontend cache, competitor, history, and feedback data. They are validation fixtures only and should not be treated as market research, product recommendations, or live Amazon evidence.
+
+SellerSprite-related demo outputs are cached synthetic fixtures. A public clone can display and validate the market research workflow without a SellerSprite login. Real SellerSprite collection, if enabled in a private workspace, must use the operator's own account and must keep cookies, sessions, exported research files, and browser profiles out of Git.
 
 ## Use With Your Own Store
 
