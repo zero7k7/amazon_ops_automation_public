@@ -28,6 +28,7 @@ SHOWCASE_FILES = {
     ".gitignore",
     ".github/workflows/demo-cross-platform.yml",
     "AGENTS.md",
+    "LICENSE",
     "README.md",
     "README_RUN.md",
     "docs/business_confirmation_template.md",

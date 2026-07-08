@@ -378,6 +378,27 @@ git ls-files | grep -E "data/|database/|logs/|\\.env$|\\.sqlite$|\\.db$|\\.html$
 
 Expected output from the first two commands is empty. Expected tracked spreadsheet or CSV files in the third command are limited to sanitized templates such as `config/templates/*.example.xlsx` and `config/templates/*.example.csv`.
 
+## License And Copyright
+
+Copyright (c) 2026 zero7k7. All rights reserved.
+
+This repository is source-available for review, evaluation, and local demo use with the included synthetic data. It is not released under an open-source license.
+
+Allowed public use:
+
+- Clone and run the project locally for evaluation.
+- Review the architecture, tests, templates, and demo workflow.
+- Generate demo reports from the included synthetic fixtures.
+
+Restricted use without written permission:
+
+- Commercial use, resale, hosted service use, or SaaS deployment.
+- Redistribution, sublicensing, or republishing under another project name.
+- Incorporating the code into another commercial product.
+- Using public demo fixtures as live market research, Amazon evidence, or SellerSprite evidence.
+
+Third-party dependencies, Amazon, Seller Central, SellerSprite, and other service names remain subject to their own licenses, trademarks, and platform terms.
+
 ## Notes
 
 - Frontend checks are optional enrichment. Report generation does not require a browser.

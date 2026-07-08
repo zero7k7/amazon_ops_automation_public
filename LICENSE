@@ -1,0 +1,23 @@
+Copyright (c) 2026 zero7k7. All rights reserved.
+
+This repository is published as a source-available public demo for review,
+evaluation, and local demonstration of the Amazon Ops Automation workflow.
+
+Permission is granted to clone and run this repository locally for evaluation
+using the included synthetic demo data.
+
+No permission is granted to use, copy, modify, redistribute, sublicense, sell,
+host as a service, or incorporate this project into a commercial product
+without prior written permission from the copyright owner.
+
+Public demo data, screenshots, templates, and generated examples are for
+validation only. They are not market research, product recommendations, or
+live Amazon, Seller Central, SellerSprite, ERP, advertising, cost, SKU, or ASIN
+evidence.
+
+Third-party dependencies, platforms, trademarks, and service names remain
+subject to their own licenses and terms. Amazon, Seller Central, and
+SellerSprite are referenced only to describe compatible export and evidence
+workflows.
+
+This software is provided as-is, without warranty of any kind.
