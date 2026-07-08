@@ -12,7 +12,7 @@ def test_chrome_cdp_probe_rejects_missing_endpoint(monkeypatch) -> None:
         probe.run_chrome_cdp_probe(
             endpoint="http://127.0.0.1:9222",
             marketplace="UK",
-            asin="B0DEMOFRNT",
+            asin="B0H73CXQ5J",
             attempts=20,
             sleep_seconds=0,
             timeout_seconds=1,
@@ -31,7 +31,7 @@ def test_chrome_cdp_probe_main_writes_20_run_report(monkeypatch, tmp_path, capsy
         {
             "attempt": index,
             "marketplace": "UK",
-            "asin": "B0DEMOFRNT",
+            "asin": "B0H73CXQ5J",
             "method": "chrome-cdp",
             "success": index != 16,
             "title": "Demo Adjustable Desk Lamp" if index != 16 else "",
@@ -53,7 +53,7 @@ def test_chrome_cdp_probe_main_writes_20_run_report(monkeypatch, tmp_path, capsy
             "--marketplace",
             "UK",
             "--asin",
-            "B0DEMOFRNT",
+            "B0H73CXQ5J",
             "--attempts-output",
             str(attempts_path),
             "--report-output",
@@ -78,7 +78,7 @@ def test_chrome_cdp_probe_recovers_readable_dom_after_navigation_timeout(monkeyp
         pass
 
     class FakePage:
-        url = "https://www.amazon.co.uk/dp/B0DEMOFRNT?th=1"
+        url = "https://www.amazon.co.uk/dp/B0H73CXQ5J?th=1"
 
         def goto(self, *args, **kwargs):
             raise FakeTimeoutError("Timed out waiting for domcontentloaded")
@@ -153,7 +153,7 @@ def test_chrome_cdp_probe_recovers_readable_dom_after_navigation_timeout(monkeyp
     payload = probe.run_chrome_cdp_probe(
         endpoint="http://127.0.0.1:9222",
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
         attempts=1,
         sleep_seconds=0,
         timeout_seconds=1,
@@ -172,7 +172,7 @@ def test_chrome_cdp_probe_clicks_continue_shopping_gate(monkeypatch) -> None:
         pass
 
     class FakePage:
-        url = "https://www.amazon.co.uk/dp/B0DEMOFRNT?th=1"
+        url = "https://www.amazon.co.uk/dp/B0H73CXQ5J?th=1"
 
         def __init__(self):
             self.dismissed = False
@@ -258,7 +258,7 @@ def test_chrome_cdp_probe_clicks_continue_shopping_gate(monkeypatch) -> None:
     payload = probe.run_chrome_cdp_probe(
         endpoint="http://127.0.0.1:9222",
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
         attempts=1,
         sleep_seconds=0,
         timeout_seconds=1,
@@ -278,7 +278,7 @@ def test_chrome_cdp_probe_uses_verified_location_setup_note(monkeypatch) -> None
         pass
 
     class FakePage:
-        url = "https://www.amazon.co.uk/dp/B0DEMOFRNT?th=1"
+        url = "https://www.amazon.co.uk/dp/B0H73CXQ5J?th=1"
 
         def goto(self, *args, **kwargs):
             return None
@@ -350,7 +350,7 @@ def test_chrome_cdp_probe_uses_verified_location_setup_note(monkeypatch) -> None
     payload = probe.run_chrome_cdp_probe(
         endpoint="http://127.0.0.1:9222",
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
         attempts=1,
         sleep_seconds=0,
         timeout_seconds=1,

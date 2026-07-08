@@ -119,7 +119,7 @@ def build_status_payload(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Show the real Chrome CDP setup needed for 20-run Amazon frontend validation.")
     parser.add_argument("--marketplace", default="UK")
-    parser.add_argument("--asin", default="B0DEMOFRNT")
+    parser.add_argument("--asin", default="B0H73CXQ5J")
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument("--port", type=int, default=9222)
     parser.add_argument("--attempts", type=int, default=20)

@@ -133,7 +133,7 @@ def anchored_review_contract_fields(promoted_orders: object = 1) -> dict[str, ob
 def test_scale_keyword_action_keeps_tiny_sample_out_of_bid_up_queue() -> None:
     from src.report_presentation import _scale_keyword_action
 
-    action = _scale_keyword_action("B0DEMOSCAL", ad_orders=1, acos=0.011, target_acos=0.273, clicks=1)
+    action = _scale_keyword_action("B07GLMHSS8", ad_orders=1, acos=0.011, target_acos=0.273, clicks=1)
 
     assert action == "小样本保留观察"
 
@@ -1434,8 +1434,8 @@ def test_frontend_check_queue_excludes_pure_cost_and_does_not_fabricate_findings
             {
                 "marketplace": "UK",
                 "product_name": "演示笔记本3片",
-                "sku": "SKU-DEMO-TRAY-01",
-                "asin": "B0DEMOFR01",
+                "sku": "SKU-PUBLIC-UK-QUEUE-01",
+                "asin": "B0H73CXQ5J",
                 "priority": "P1",
                 "issue_type": "广告归因弱诊断",
                 "primary_reason": "近14天广告有点击但广告订单弱",
@@ -1449,7 +1449,7 @@ def test_frontend_check_queue_excludes_pure_cost_and_does_not_fabricate_findings
                 "marketplace": "UK",
                 "product_name": "90L演示耗材100只",
                 "sku": "ABT-90-100-C",
-                "asin": "B0DEMOTRSH",
+                "asin": "B0CBPNVMV2",
                 "priority": "P1",
                 "issue_type": "库存 / 利润压力",
                 "action_group": "成本 / 利润动作",
@@ -1463,8 +1463,8 @@ def test_frontend_check_queue_excludes_pure_cost_and_does_not_fabricate_findings
         output_dir=OUTPUT_DIR / "__missing_frontend_fixture__",
     )
 
-    assert [row["asin"] for row in rows] == ["B0DEMOFR01"]
-    assert rows[0]["product_url"] == "https://www.amazon.co.uk/dp/B0DEMOFR01?th=1"
+    assert [row["asin"] for row in rows] == ["B0H73CXQ5J"]
+    assert rows[0]["product_url"] == "https://www.amazon.co.uk/dp/B0H73CXQ5J?th=1"
     assert rows[0]["frontend_core_keyword"]
     assert rows[0]["frontend_search_url"].startswith("https://www.amazon.co.uk/s?k=")
     assert rows[0]["frontend_check_status"] == "待前台检查"
@@ -1483,8 +1483,8 @@ def test_frontend_check_queue_only_keeps_p0_p1_listing_candidates() -> None:
             {
                 "marketplace": "UK",
                 "product_name": "演示笔记本3片",
-                "sku": "SKU-DEMO-TRAY-01",
-                "asin": "B0DEMOFR01",
+                "sku": "SKU-PUBLIC-UK-QUEUE-01",
+                "asin": "B0H73CXQ5J",
                 "primary_reason": "Listing 待人工确认",
                 "key_evidence": "近14天点击 31；广告订单 0",
             }
@@ -4264,8 +4264,8 @@ def test_growth_test_rows_require_intent_and_respect_cooldown() -> None:
 
     source_row = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-LAMP-01",
-        "asin": "B0DEMOLMP1",
+        "sku": "SKU-PUBLIC-UK-GROWTH-01",
+        "asin": "B0H73CXQ5J",
         "product_name": "Demo desk lamp",
         "search_term_or_target": "adjustable desk lamp",
         "suggested_action": "观察",
@@ -4282,8 +4282,8 @@ def test_growth_test_rows_require_intent_and_respect_cooldown() -> None:
     }
     product_card = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-LAMP-01",
-        "asin": "B0DEMOLMP1",
+        "sku": "SKU-PUBLIC-UK-GROWTH-01",
+        "asin": "B0H73CXQ5J",
         "product_name": "Demo desk lamp",
         "today_allowed_actions": ["observe", "create_exact_low_budget"],
         "today_blocked_actions": ["bid_up", "budget_up", "broad_scale"],
@@ -4303,7 +4303,7 @@ def test_growth_test_rows_require_intent_and_respect_cooldown() -> None:
     assert rows[0]["action_scope"] == "search_term"
     assert (
         rows[0]["action_id"]
-        == "UK||SKU-DEMO-LAMP-01||B0DEMOLMP1||search_term||adjustable desk lamp||growth_test"
+        == "UK||SKU-PUBLIC-UK-GROWTH-01||B0H73CXQ5J||search_term||adjustable desk lamp||growth_test"
     )
     assert rows[0]["term_source"] == "search_term_report"
     assert rows[0]["evidence_level"] in {"核心强相关", "强意图长尾"}
@@ -4446,8 +4446,8 @@ def test_growth_test_rows_require_intent_and_respect_cooldown() -> None:
         [
             {
                 "marketplace": "UK",
-                "sku": "SKU-DEMO-LAMP-01",
-                "asin": "B0DEMOLMP1",
+                "sku": "SKU-PUBLIC-UK-GROWTH-01",
+                "asin": "B0H73CXQ5J",
                 "search_term_or_target": "led desk lamp with brightness setting",
                 "normalized_action": "bid_up",
                 "action_detail": "加价5%-10%",
@@ -4473,8 +4473,8 @@ def test_growth_test_rows_require_intent_and_respect_cooldown() -> None:
         [
             {
                 "marketplace": "UK",
-                "sku": "SKU-DEMO-LAMP-01",
-                "asin": "B0DEMOLMP1",
+                "sku": "SKU-PUBLIC-UK-GROWTH-01",
+                "asin": "B0H73CXQ5J",
                 "search_term_or_target": "adjustable desk lamp",
                 "normalized_action": "growth_test",
                 "action_detail": "小预算试投",
@@ -4680,7 +4680,7 @@ def test_growth_traffic_origin_mapping() -> None:
     assert _growth_traffic_origin({"match_type": "exact", "campaign_name": "自动兜底"}) == "手动广告"
     assert _growth_traffic_origin({"match_type": "phrase"}) == "手动广告"
     assert _growth_traffic_origin({"match_type": "broad"}) == "手动广告"
-    assert _growth_traffic_origin({"search_term_or_target": "B0DEMOLMP1"}) == "ASIN定向"
+    assert _growth_traffic_origin({"search_term_or_target": "B0H73CXQ5J"}) == "ASIN定向"
     assert _growth_traffic_origin({"targeting": "ASIN定向"}) == "ASIN定向"
     assert _growth_traffic_origin({"campaign_name": "自动-演示台灯"}) == "自动广告"
     assert _growth_traffic_origin({"confirmed_note": "用户反馈：美国演示台灯自动出单词拉入精准小预算。"}) == "自动广告"
@@ -4707,8 +4707,8 @@ def test_growth_test_section_is_separate_from_copy_area() -> None:
     }
     growth_row = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-LAMP-01",
-        "asin": "B0DEMOLMP1",
+        "sku": "SKU-PUBLIC-UK-GROWTH-01",
+        "asin": "B0H73CXQ5J",
         "product_name": "Demo desk lamp",
         "search_term_or_target": "adjustable desk lamp",
         "suggested_action": "小预算试投",
@@ -14389,11 +14389,11 @@ def test_frontend_status_summary_does_not_expose_ad_hoc_public_asin_panel() -> N
     from src.generate_html_report import _render_frontend_status_summary
 
     demo_html = _render_frontend_status_summary(
-        [{"marketplace": "US", "sku": "SKU-DEMO-US-001", "asin": "B0DEMOUS01"}]
+        [{"marketplace": "US", "sku": "SKU-PUBLIC-US-001", "asin": "B0B5HPKZKM"}]
     )
 
-    assert "公开 ASIN 测试" not in demo_html
-    assert "B084Z8CXXN" not in demo_html
+    assert "PUBLIC-LIVE-ASIN-SMOKE" not in demo_html
+    assert "B07MQBJKKY" not in demo_html
     assert 'data-run-report-action="battle-diagnosis-one"' not in demo_html
 
 
@@ -14402,16 +14402,16 @@ def test_frontend_check_queue_synthesizes_ad_hoc_asin_test_row() -> None:
 
     rows = fallback_rows_from_payload(
         {"marketplace_results": [{"report_view_snapshot": {"frontend_check_queue_rows": []}}]},
-        {"marketplace": "US", "sku": "PUBLIC-LIVE-ASIN-SMOKE", "asin": "B084Z8CXXN"},
+        {"marketplace": "US", "sku": "PUBLIC-LIVE-ASIN-SMOKE", "asin": "B07MQBJKKY"},
     )
 
     assert len(rows) == 1
     row = rows[0]
     assert row["marketplace"] == "US"
     assert row["sku"] == "PUBLIC-LIVE-ASIN-SMOKE"
-    assert row["asin"] == "B084Z8CXXN"
-    assert row["product_url"] == "https://www.amazon.com/dp/B084Z8CXXN"
-    assert row["frontend_search_url"] == "https://www.amazon.com/s?k=desk+lamp"
+    assert row["asin"] == "B07MQBJKKY"
+    assert row["product_url"] == "https://www.amazon.com/dp/B07MQBJKKY"
+    assert row["frontend_search_url"] == "https://www.amazon.com/s?k=Public+Amazon+ASIN+B07MQBJKKY"
     assert row["source_role"] == "ad_hoc_public_test"
 
 
@@ -14419,7 +14419,7 @@ def test_frontend_check_queue_does_not_synthesize_without_marketplace_or_asin() 
     from scripts.frontend_check_queue import fallback_rows_from_payload
 
     assert fallback_rows_from_payload({}, {"marketplace": "US", "sku": "", "asin": ""}) == []
-    assert fallback_rows_from_payload({}, {"marketplace": "", "sku": "", "asin": "B084Z8CXXN"}) == []
+    assert fallback_rows_from_payload({}, {"marketplace": "", "sku": "", "asin": "B07MQBJKKY"}) == []
 
 
 def test_frontend_status_summary_counts_read_failures_as_pending_not_checked() -> None:
@@ -14461,8 +14461,8 @@ def test_frontend_check_cards_render_single_product_frontend_button() -> None:
             {
                 "priority": "P1",
                 "marketplace": "US",
-                "sku": "SKU-DEMO-BAG-01",
-                "asin": "B0DEMOBAG1",
+                "sku": "SKU-PUBLIC-US-CARD-01",
+                "asin": "B0B5HPKZKM",
                 "product_name": "演示笔记本 12片",
                 "frontend_check_status": "待前台检查",
                 "trigger_reason": "近7天广告无单",
@@ -14475,8 +14475,8 @@ def test_frontend_check_cards_render_single_product_frontend_button() -> None:
     assert 'data-run-report-action="frontend-check-one"' in html
     assert 'data-run-report-reload-on-done="true"' in html
     assert "marketplace=US" in html
-    assert "sku=SKU-DEMO-BAG-01" in html
-    assert "asin=B0DEMOBAG1" in html
+    assert "sku=SKU-PUBLIC-US-CARD-01" in html
+    assert "asin=B0B5HPKZKM" in html
 
 
 def test_frontend_check_cards_show_executed_action_detail() -> None:
@@ -14487,8 +14487,8 @@ def test_frontend_check_cards_show_executed_action_detail() -> None:
             {
                 "priority": "P0",
                 "marketplace": "US",
-                "sku": "SKU-DEMO-BAG-BULK",
-                "asin": "B0DEMOBAG2",
+                "sku": "SKU-PUBLIC-US-CARD-BULK",
+                "asin": "B07GLMHSS8",
                 "product_name": "Demo cable ties 100 count",
                 "frontend_check_status": "已自动检查",
                 "trigger_reason": "近14天总单 0",
@@ -14515,8 +14515,8 @@ def test_frontend_check_cards_fuse_sellersprite_into_auto_conclusion() -> None:
             {
                 "priority": "P0",
                 "marketplace": "US",
-                "sku": "SKU-DEMO-BAG-100",
-                "asin": "B0DEMOBAG3",
+                "sku": "SKU-PUBLIC-US-CARD-100",
+                "asin": "B07T8BT5LZ",
                 "product_name": "Demo cable ties 100 count",
                 "frontend_check_status": "已自动检查",
                 "frontend_auto_conclusion_label": "明确前台劣势",

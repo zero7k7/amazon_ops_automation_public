@@ -189,12 +189,12 @@ def test_setup_demo_data_writes_public_offline_runtime_inputs(monkeypatch, tmp_p
     assert "data/output/autoopt_feedback_input.json" in relative
 
     ads_text = (tmp_path / "data/raw_ads/ads_report_all.csv").read_text(encoding="utf-8-sig")
-    assert "SKU-DEMO-US-001" in ads_text
-    assert "B0DEMOUS01" in ads_text
+    assert "SKU-PUBLIC-US-001" in ads_text
+    assert "B0B5HPKZKM" in ads_text
 
     frontend_payload = json.loads((tmp_path / "data/output/frontend_check_results.json").read_text(encoding="utf-8"))
     assert frontend_payload["source"] == "setup_demo_data"
-    assert any(item["asin"] == "B0DEMOUS01" and item["frontend_cache_used"] is True for item in frontend_payload["items"])
+    assert any(item["asin"] == "B0B5HPKZKM" and item["frontend_cache_used"] is True for item in frontend_payload["items"])
 
     sellersprite_payload = json.loads(
         (tmp_path / "data/output/sellersprite_reverse_asin_results.json").read_text(encoding="utf-8")

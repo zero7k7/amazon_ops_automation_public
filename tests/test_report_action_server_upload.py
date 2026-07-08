@@ -1371,9 +1371,9 @@ def test_growth_test_completion_preserves_experiment_fields_and_writes_review(mo
     feedback, appended, row_count = server.append_ad_completion_feedback(
         {
             "marketplace": "UK",
-            "sku": "SKU-DEMO-LAMP-01",
-            "asin": "B0DEMOLMP1",
-            "product_name": "Demo desk lamp",
+            "sku": "SKU-PUBLIC-UK-GROWTH-01",
+            "asin": "B0H73CXQ5J",
+            "product_name": "Public craft sample",
             "search_term_or_target": "adjustable desk lamp",
             "suggested_action": "推广实验",
             "manual_action_taken": "推广实验",
@@ -1433,9 +1433,9 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
 
     base = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-LAMP-01",
-        "asin": "B0DEMOLMP1",
-        "product_name": "Demo desk lamp",
+        "sku": "SKU-PUBLIC-UK-GROWTH-01",
+        "asin": "B0H73CXQ5J",
+        "product_name": "Public craft sample",
         "suggested_action": "小预算试投",
         "manual_action_taken": "小预算试投",
         "confirmed_at": "2026-06-18 09:30:00",
@@ -1506,9 +1506,9 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
 
     base = {
         "marketplace": "UK",
-        "sku": "SKU-DEMO-LAMP-01",
-        "asin": "B0DEMOLMP1",
-        "product_name": "Demo desk lamp",
+        "sku": "SKU-PUBLIC-UK-GROWTH-01",
+        "asin": "B0H73CXQ5J",
+        "product_name": "Public craft sample",
         "suggested_action": "小预算试投",
         "manual_action_taken": "小预算试投",
         "confirmed_at": "2026-06-18 09:30:00",

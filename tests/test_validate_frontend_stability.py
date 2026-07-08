@@ -25,7 +25,7 @@ def test_urllib_frontend_fetch_returns_error_on_incomplete_read(monkeypatch) -> 
     monkeypatch.setattr(frontend_product_fetch.urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
 
     html, error = frontend_product_fetch.fetch_html_urllib(
-        "https://www.amazon.co.uk/dp/B0DEMOFRNT",
+        "https://www.amazon.co.uk/dp/B0H73CXQ5J",
         1,
         user_agent="test",
     )
@@ -38,7 +38,7 @@ def _attempt(index: int, *, success: bool = True) -> dict[str, object]:
     row = {
         "attempt": index,
         "marketplace": "UK",
-        "asin": "B0DEMOFRNT",
+        "asin": "B0H73CXQ5J",
         "success": success,
         "title": "22x16x9cm Natural Metal Tea Organizer",
         "price": "£17.89",
@@ -60,7 +60,7 @@ def test_frontend_stability_accepts_19_of_20_success() -> None:
     report = build_stability_report(
         {"attempts": attempts},
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
     )
 
     assert report["total_attempts"] == 20
@@ -78,7 +78,7 @@ def test_frontend_stability_accepts_16_of_20_success() -> None:
     report = build_stability_report(
         {"attempts": attempts},
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
     )
 
     assert report["success_count"] == 16
@@ -95,7 +95,7 @@ def test_frontend_stability_rejects_15_of_20_success() -> None:
     report = build_stability_report(
         {"attempts": attempts},
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
     )
 
     assert report["success_count"] == 15
@@ -112,7 +112,7 @@ def test_frontend_stability_rejects_less_than_20_attempts() -> None:
     report = build_stability_report(
         {"attempts": attempts},
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
     )
 
     assert report["total_attempts"] == 18
@@ -129,7 +129,7 @@ def test_frontend_stability_rejects_wrong_marketplace_currency() -> None:
     report = build_stability_report(
         {"attempts": attempts},
         marketplace="UK",
-        asin="B0DEMOFRNT",
+        asin="B0H73CXQ5J",
     )
 
     assert report["success_count"] == 19
@@ -217,7 +217,7 @@ def test_frontend_stability_cli_can_print_without_writing(monkeypatch, tmp_path,
             "--marketplace",
             "UK",
             "--asin",
-            "B0DEMOFRNT",
+            "B0H73CXQ5J",
         ],
     )
 

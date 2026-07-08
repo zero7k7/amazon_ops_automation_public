@@ -110,7 +110,7 @@ These files are ignored by Git. The script refuses to overwrite existing files u
 
 The generated demo data is synthetic. It covers the public report path for ads, ERP sales, cost mapping, Seller Central custom analytics, frontend evidence cache, SellerSprite-style enrichment, competitor discovery, history trend snapshots, and executed feedback review.
 
-The demo products intentionally use generic office examples and `B0DEMO...` ASINs. They are placeholders for validation only and should not be treated as market research, product recommendations, or live Amazon evidence.
+The demo products use public Amazon sample ASINs with synthetic ads, ERP, cost, SellerSprite-style, frontend cache, competitor, history, and feedback data. They are validation fixtures only and should not be treated as market research, product recommendations, or live Amazon evidence.
 
 ## Use With Your Own Store
 

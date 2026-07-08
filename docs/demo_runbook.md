@@ -52,7 +52,7 @@ data/output/sellersprite_history_snapshots.jsonl
 data/output/autoopt_feedback_input.json
 ```
 
-The demo inputs use synthetic office products and `B0DEMO...` ASINs. They exercise ads, ERP sales, cost mapping, enhanced custom analytics, frontend cache display, SellerSprite-style enrichment, competitor discovery, historical trend snapshots, and executed feedback review without depending on live Amazon pages.
+The demo inputs use public Amazon sample ASINs with synthetic operating data. They exercise ads, ERP sales, cost mapping, enhanced custom analytics, frontend cache display, SellerSprite-style enrichment, competitor discovery, historical trend snapshots, and executed feedback review without depending on live Amazon pages.
 
 ## Run The Demo Console
 
