@@ -54,30 +54,28 @@ data/output/autoopt_feedback_input.json
 
 The demo inputs use synthetic office products and `B0DEMO...` ASINs. They exercise ads, ERP sales, cost mapping, enhanced custom analytics, frontend cache display, SellerSprite-style enrichment, competitor discovery, historical trend snapshots, and executed feedback review without depending on live Amazon pages.
 
-## Generate Reports
+## Run The Demo Console
 
 macOS or Linux shell:
 
 ```bash
-.venv/bin/python main.py --marketplace ALL --safe-run
+.venv/bin/python scripts/run_report_window.py --workflow daily
 ```
 
 Windows PowerShell:
 
 ```powershell
 $env:PYTHONUTF8="1"
-.\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
+.\run_today_report.bat
 ```
 
-Expected outputs:
+The default demo starts the local button service and opens:
 
 ```text
-data/output/safe_run/<timestamp>/latest_recommendations.html
-data/output/safe_run/<timestamp>/dashboard.html
-data/output/safe_run/<timestamp>/summary.html
-data/output/safe_run/<timestamp>/latest_analysis.json
-data/output/safe_run/<timestamp>/amazon_ops_report_YYYY-MM-DD.xlsx
+http://127.0.0.1:8765/report/latest_recommendations.html
 ```
+
+Keep the terminal window open while using report buttons. Demo reports are written under `data/output/`.
 
 ## Validate The Demo
 
@@ -97,3 +95,16 @@ $env:PYTHONUTF8="1"
 ```
 
 The validation should create safe-run output only under `data/output/safe_run/`. Generated reports, real exports, cookies, sessions, browser profiles, and local virtual environments must stay out of Git.
+
+For a read-only report generation check without starting the local service, run:
+
+```bash
+.venv/bin/python main.py --marketplace ALL --safe-run
+```
+
+Windows PowerShell:
+
+```powershell
+$env:PYTHONUTF8="1"
+.\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
+```

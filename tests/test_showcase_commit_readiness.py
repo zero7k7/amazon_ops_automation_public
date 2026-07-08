@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import scripts.check_showcase_commit_readiness as readiness
 
@@ -220,6 +221,21 @@ def test_setup_demo_data_writes_public_offline_runtime_inputs(monkeypatch, tmp_p
         assert "Refusing to overwrite existing file" in str(exc)
     else:
         raise AssertionError("setup_demo_data should refuse to overwrite existing demo targets")
+
+
+def test_setup_demo_data_main_points_to_service_demo(monkeypatch, tmp_path, capsys) -> None:
+    from scripts import setup_demo_data
+
+    monkeypatch.setattr(setup_demo_data, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["setup_demo_data.py"])
+
+    code = setup_demo_data.main()
+    output = capsys.readouterr().out
+
+    assert code == 0
+    assert "scripts/run_report_window.py --workflow daily" in output
+    assert "127.0.0.1:8765/report/latest_recommendations.html" in output
+    assert "main.py --marketplace ALL --safe-run" not in output
 
 
 def test_commit_readiness_blocks_staged_generated_files(monkeypatch, capsys) -> None:

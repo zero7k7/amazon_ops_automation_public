@@ -819,7 +819,8 @@ def main() -> int:
     print("Demo data written:")
     for path in written:
         print(f"- {path.relative_to(ROOT)}")
-    print("Next command: python main.py --marketplace ALL --safe-run")
+    print("Next command: python scripts/run_report_window.py --workflow daily")
+    print("This starts the local button service and opens http://127.0.0.1:8765/report/latest_recommendations.html")
     return 0
 
 

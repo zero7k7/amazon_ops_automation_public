@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-if [[ -x ".venv_mac/bin/python" ]]; then
+if [[ -x ".venv/bin/python" ]]; then
+  PYTHON=".venv/bin/python"
+elif [[ -x ".venv_mac/bin/python" ]]; then
   PYTHON=".venv_mac/bin/python"
 else
   PYTHON="python3"

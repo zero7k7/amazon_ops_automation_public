@@ -47,7 +47,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python scripts/setup_demo_data.py
-.venv/bin/python main.py --marketplace ALL --safe-run
+.venv/bin/python scripts/run_report_window.py --workflow daily
 ```
 
 ### Windows PowerShell
@@ -58,26 +58,24 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe scripts\setup_demo_data.py
-.\.venv\Scripts\python.exe main.py --marketplace ALL --safe-run
+run_today_report.bat
 ```
 
-Reports are written under:
+The default demo starts the local button service, runs the daily report workflow, and opens:
 
 ```text
-data/output/safe_run/<timestamp>/
+http://127.0.0.1:8765/report/latest_recommendations.html
 ```
 
-Open:
+Keep the terminal window open while using report buttons. Generated demo reports are written under:
 
 ```text
-latest_recommendations.html
-dashboard.html
-summary.html
+data/output/
 ```
 
 ## Local Launchers
 
-After installing dependencies and creating demo data, the root launchers can be used for a local operator-style session.
+After installing dependencies and creating demo data, the root launchers can be used for a local operator-style session. This is the default demo path because it matches the formal operations console and enables local page buttons.
 
 | Platform | Daily report with local buttons | Start button service only | Retry frontend checks |
 | --- | --- | --- | --- |

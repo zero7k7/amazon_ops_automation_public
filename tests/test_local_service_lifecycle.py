@@ -54,6 +54,7 @@ def test_run_today_report_command_uses_window_scoped_session() -> None:
     root = Path(__file__).resolve().parents[1]
     command = (root / "run_today_report.command").read_text(encoding="utf-8")
 
+    assert '.venv/bin/python' in command
     assert 'exec "$PYTHON" scripts/run_report_window.py --workflow daily' in command
     assert "scripts/ensure_report_action_server.py" not in command
 
@@ -63,6 +64,8 @@ def test_retry_and_service_commands_use_window_scoped_session() -> None:
     retry = (root / "retry_frontend_checks.command").read_text(encoding="utf-8")
     service = (root / "start_report_action_server.command").read_text(encoding="utf-8")
 
+    assert '.venv/bin/python' in retry
+    assert '.venv/bin/python' in service
     assert 'exec "$PYTHON" scripts/run_report_window.py --workflow frontend-retry' in retry
     assert "scripts/ensure_report_action_server.py" not in retry
     assert 'exec "$PYTHON" scripts/run_report_window.py --workflow service-only' in service
