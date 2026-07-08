@@ -41,11 +41,16 @@ jobs:
       - name: Run safe-run smoke test
         run: python main.py --marketplace ALL --safe-run
 
-      - name: Run tests
-        run: python -m pytest
+      - name: Validate public demo outputs
+        run: python scripts/validate_public_demo_smoke.py
 
-      - name: Run showcase validation
-        run: python scripts/validate_showcase_mvp.py
+      - name: Run public smoke tests
+        run: >-
+          python -m pytest
+          tests/test_cross_platform_launchers.py
+          tests/test_showcase_commit_readiness.py::test_setup_demo_data_writes_public_offline_runtime_inputs
+          tests/test_report_action_server_upload.py::test_missing_latest_report_returns_empty_state_page
+          tests/test_reporting_regressions.py::test_frontend_status_summary_does_not_expose_ad_hoc_public_asin_panel
 
       - name: Ensure generated demo artifacts are ignored
         shell: bash

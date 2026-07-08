@@ -26,6 +26,7 @@ BUSINESS_INBOX_SUFFIXES = {".csv", ".xlsx"}
 
 SHOWCASE_FILES = {
     ".gitignore",
+    ".github/workflows/demo-cross-platform.yml",
     "AGENTS.md",
     "README.md",
     "README_RUN.md",
@@ -75,6 +76,7 @@ SHOWCASE_FILES = {
     "scripts/setup_demo_data.py",
     "scripts/validate_frontend_stability.py",
     "scripts/audit_ops_console_analysis.py",
+    "scripts/validate_public_demo_smoke.py",
     "scripts/validate_showcase_mvp.py",
     "src/generate_excel_report.py",
     "src/generate_html_report.py",

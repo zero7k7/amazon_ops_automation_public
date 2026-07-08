@@ -173,7 +173,7 @@ def test_setup_demo_data_writes_public_offline_runtime_inputs(monkeypatch, tmp_p
 
     written = setup_demo_data.setup_demo_data(force=False)
 
-    relative = {str(path.relative_to(tmp_path)) for path in written}
+    relative = {path.relative_to(tmp_path).as_posix() for path in written}
     assert "config/product_cost_config.xlsx" in relative
     assert "config/sku_alias_map.xlsx" in relative
     assert "data/raw_ads/ads_report_all.csv" in relative
