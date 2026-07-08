@@ -43,7 +43,16 @@ config/product_cost_config.xlsx
 config/sku_alias_map.xlsx
 data/raw_ads/ads_report_all.csv
 data/raw_erp/sales_report_all.xlsx
+data/raw_amazon_custom/<MARKET>/traffic_sales_*.xlsx
+data/raw_amazon_custom/<MARKET>/search_query_performance_*.xlsx
+data/output/frontend_check_results.json
+data/output/sellersprite_reverse_asin_results.json
+data/output/sellersprite_competitor_discovery_results.json
+data/output/sellersprite_history_snapshots.jsonl
+data/output/autoopt_feedback_input.json
 ```
+
+The demo inputs use synthetic office products and `B0DEMO...` ASINs. They exercise ads, ERP sales, cost mapping, enhanced custom analytics, frontend cache display, SellerSprite-style enrichment, competitor discovery, historical trend snapshots, and executed feedback review without depending on live Amazon pages.
 
 ## Generate Reports
 

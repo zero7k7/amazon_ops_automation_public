@@ -148,6 +148,7 @@ def test_commit_readiness_accepts_shareable_demo_files(monkeypatch, capsys) -> N
                 "config/templates/product_cost_config.example.xlsx",
                 "config/templates/product_keyword_rules.example.csv",
                 "config/templates/frontend_locations.example.json",
+                "docs/demo_runbook.md",
                 "docs/shareable_clone_runbook.md",
                 "scripts/setup_demo_data.py",
             ],
@@ -164,7 +165,7 @@ def test_commit_readiness_accepts_shareable_demo_files(monkeypatch, capsys) -> N
     assert "changed files are assigned to known commit groups" in output
 
 
-def test_setup_demo_data_writes_fake_runtime_inputs(monkeypatch, tmp_path) -> None:
+def test_setup_demo_data_writes_public_offline_runtime_inputs(monkeypatch, tmp_path) -> None:
     from scripts import setup_demo_data
 
     monkeypatch.setattr(setup_demo_data, "ROOT", tmp_path)
@@ -176,10 +177,42 @@ def test_setup_demo_data_writes_fake_runtime_inputs(monkeypatch, tmp_path) -> No
     assert "config/sku_alias_map.xlsx" in relative
     assert "data/raw_ads/ads_report_all.csv" in relative
     assert "data/raw_erp/sales_report_all.xlsx" in relative
+    assert any(path.startswith("data/raw_amazon_custom/US/traffic_sales_us_compare_") for path in relative)
+    assert any(path.startswith("data/raw_amazon_custom/US/search_query_performance_us_compare_") for path in relative)
+    assert any(path.startswith("data/raw_amazon_custom/UK/traffic_sales_uk_compare_") for path in relative)
+    assert any(path.startswith("data/raw_amazon_custom/DE/search_query_performance_de_compare_") for path in relative)
+    assert "data/output/frontend_check_results.json" in relative
+    assert "data/output/sellersprite_reverse_asin_results.json" in relative
+    assert "data/output/sellersprite_competitor_discovery_results.json" in relative
+    assert "data/output/sellersprite_history_snapshots.jsonl" in relative
+    assert "data/output/autoopt_feedback_input.json" in relative
 
     ads_text = (tmp_path / "data/raw_ads/ads_report_all.csv").read_text(encoding="utf-8-sig")
     assert "SKU-DEMO-US-001" in ads_text
     assert "B0DEMOUS01" in ads_text
+
+    frontend_payload = json.loads((tmp_path / "data/output/frontend_check_results.json").read_text(encoding="utf-8"))
+    assert frontend_payload["source"] == "setup_demo_data"
+    assert any(item["asin"] == "B0DEMOUS01" and item["frontend_cache_used"] is True for item in frontend_payload["items"])
+
+    sellersprite_payload = json.loads(
+        (tmp_path / "data/output/sellersprite_reverse_asin_results.json").read_text(encoding="utf-8")
+    )
+    roles = {item["source_role"] for item in sellersprite_payload["items"]}
+    assert {"own", "competitor"} <= roles
+
+    competitor_payload = json.loads(
+        (tmp_path / "data/output/sellersprite_competitor_discovery_results.json").read_text(encoding="utf-8")
+    )
+    assert all(item["competitor_discovery_status"] == "已抓取" for item in competitor_payload["items"])
+    assert all(item["competitor_count"] >= 3 for item in competitor_payload["items"])
+
+    history_lines = (tmp_path / "data/output/sellersprite_history_snapshots.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(history_lines) >= 18
+
+    feedback_payload = json.loads((tmp_path / "data/output/autoopt_feedback_input.json").read_text(encoding="utf-8"))
+    assert all(row["confirmed_status"] == "已执行" for row in feedback_payload["rows"])
+    assert all(row["search_term_or_target"] for row in feedback_payload["rows"])
 
     try:
         setup_demo_data.setup_demo_data(force=False)

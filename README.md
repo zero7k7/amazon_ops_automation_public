@@ -13,7 +13,7 @@ Release note: public releases should be prepared from this public branch or from
 This repo is intended for three uses:
 
 - Review the reporting and decision-workflow architecture.
-- Run a local demo with generated fake data.
+- Run a local demo with generated synthetic Amazon-style data.
 - Adapt the pipeline to your own Amazon marketplace exports.
 
 It is not a hosted SaaS product, a managed Amazon API integration, or a plug-and-play decision engine. Real operating decisions require your own clean exports, cost tables, SKU/ASIN mapping, and marketplace-specific validation.
@@ -92,20 +92,27 @@ C:\Program Files\Google\Chrome\Application\chrome.exe
 
 ## Demo Data
 
-`scripts/setup_demo_data.py` creates fake runtime inputs:
+`scripts/setup_demo_data.py` creates synthetic runtime inputs:
 
 ```text
 config/product_cost_config.xlsx
 config/sku_alias_map.xlsx
 data/raw_ads/ads_report_all.csv
 data/raw_erp/sales_report_all.xlsx
+data/raw_amazon_custom/<MARKET>/traffic_sales_*.xlsx
+data/raw_amazon_custom/<MARKET>/search_query_performance_*.xlsx
+data/output/frontend_check_results.json
+data/output/sellersprite_reverse_asin_results.json
+data/output/sellersprite_competitor_discovery_results.json
+data/output/sellersprite_history_snapshots.jsonl
+data/output/autoopt_feedback_input.json
 ```
 
 These files are ignored by Git. The script refuses to overwrite existing files unless `--force` is passed.
 
-The generated demo data is synthetic. It is only useful for checking that the pipeline runs and that the report UI renders.
+The generated demo data is synthetic. It covers the public report path for ads, ERP sales, cost mapping, Seller Central custom analytics, frontend evidence cache, SellerSprite-style enrichment, competitor discovery, history trend snapshots, and executed feedback review.
 
-The demo products intentionally use generic office examples. They are placeholders for validation only and should not be treated as market research or product recommendations.
+The demo products intentionally use generic office examples and `B0DEMO...` ASINs. They are placeholders for validation only and should not be treated as market research, product recommendations, or live Amazon evidence.
 
 ## Use With Your Own Store
 

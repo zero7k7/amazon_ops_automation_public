@@ -36,6 +36,7 @@ SHOWCASE_FILES = {
     "docs/multi_agent_work_packages.md",
     "docs/analysis_module_refactor_plan.md",
     "docs/data_leakage_guard.md",
+    "docs/demo_runbook.md",
     "docs/frontend_stability_plan.md",
     "docs/github_release_readiness.md",
     "docs/release_boundary_plan.md",
