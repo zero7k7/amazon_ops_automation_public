@@ -325,6 +325,31 @@ REPORT_JS += r"""
     };
   }
 
+  function localActionReadOnlyMessage() {
+    return '静态 file:// 报告只读。需要先启动 start_report_action_server.command，并从 http://127.0.0.1:8765/report/latest_recommendations.html 打开后再运行。';
+  }
+
+  function disableFileReportActions() {
+    if (window.location.protocol !== 'file:') return;
+    var message = localActionReadOnlyMessage();
+    document.querySelectorAll('[data-run-report-action]').forEach(function (button) {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+      button.setAttribute('title', message);
+      button.classList.add('is-disabled');
+      var action = button.getAttribute('data-run-report-action') || '';
+      document.querySelectorAll('[data-run-report-status="' + action + '"]').forEach(function (target) {
+        target.textContent = message;
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', disableFileReportActions);
+  } else {
+    disableFileReportActions();
+  }
+
   function norm(text) {
     return String(text || '').trim().toLowerCase();
   }

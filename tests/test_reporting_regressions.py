@@ -14287,6 +14287,17 @@ def test_report_js_syncs_submission_status_and_redirects_stale_safe_run_page() -
     assert "本机服务未开启：请先双击 start_report_action_server.command，再点此按钮。" not in REPORT_JS
 
 
+def test_report_js_disables_local_action_buttons_on_file_reports() -> None:
+    from src.generate_html_report import REPORT_JS
+
+    assert "function disableFileReportActions()" in REPORT_JS
+    assert "window.location.protocol !== 'file:'" in REPORT_JS
+    assert "document.querySelectorAll('[data-run-report-action]')" in REPORT_JS
+    assert "button.disabled = true" in REPORT_JS
+    assert "静态 file:// 报告只读" in REPORT_JS
+    assert "http://127.0.0.1:8765/report/latest_recommendations.html" in REPORT_JS
+
+
 def test_local_submit_panel_uses_compact_collapsed_status_style() -> None:
     from src.generate_html_report import REPORT_UI_CSS
 
