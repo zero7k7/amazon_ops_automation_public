@@ -14385,6 +14385,48 @@ def test_frontend_status_summary_exposes_single_product_status_slot() -> None:
     assert "单产品按钮只检查当前 ASIN" in html
 
 
+def test_frontend_status_summary_exposes_public_demo_reverse_lookup_button_only_for_demo_rows() -> None:
+    from src.generate_html_report import _render_frontend_status_summary
+
+    demo_html = _render_frontend_status_summary(
+        [{"marketplace": "US", "sku": "SKU-DEMO-US-001", "asin": "B0DEMOUS01"}]
+    )
+    private_html = _render_frontend_status_summary(
+        [{"marketplace": "US", "sku": "SKU-REAL-001", "asin": "B0TEST1234"}]
+    )
+
+    assert "公开 ASIN 测试" in demo_html
+    assert "B084Z8CXXN" in demo_html
+    assert 'data-run-report-action="battle-diagnosis-one"' in demo_html
+    assert "公开 ASIN 测试" not in private_html
+    assert "B084Z8CXXN" not in private_html
+
+
+def test_frontend_check_queue_synthesizes_ad_hoc_asin_test_row() -> None:
+    from scripts.frontend_check_queue import fallback_rows_from_payload
+
+    rows = fallback_rows_from_payload(
+        {"marketplace_results": [{"report_view_snapshot": {"frontend_check_queue_rows": []}}]},
+        {"marketplace": "US", "sku": "PUBLIC-LIVE-ASIN-SMOKE", "asin": "B084Z8CXXN"},
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["marketplace"] == "US"
+    assert row["sku"] == "PUBLIC-LIVE-ASIN-SMOKE"
+    assert row["asin"] == "B084Z8CXXN"
+    assert row["product_url"] == "https://www.amazon.com/dp/B084Z8CXXN"
+    assert row["frontend_search_url"] == "https://www.amazon.com/s?k=desk+lamp"
+    assert row["source_role"] == "ad_hoc_public_test"
+
+
+def test_frontend_check_queue_does_not_synthesize_without_marketplace_or_asin() -> None:
+    from scripts.frontend_check_queue import fallback_rows_from_payload
+
+    assert fallback_rows_from_payload({}, {"marketplace": "US", "sku": "", "asin": ""}) == []
+    assert fallback_rows_from_payload({}, {"marketplace": "", "sku": "", "asin": "B084Z8CXXN"}) == []
+
+
 def test_frontend_status_summary_counts_read_failures_as_pending_not_checked() -> None:
     from src.generate_html_report import _frontend_queue_counts, _render_frontend_status_summary
 

@@ -97,4 +97,29 @@ def fallback_rows_from_payload(payload: dict, filters: dict[str, str]) -> list[d
         )
         matched.append(enriched)
         break
-    return matched
+    if matched:
+        return matched
+    marketplace = str(filters.get("marketplace") or "").strip().upper()
+    asin = str(filters.get("asin") or "").strip().upper()
+    if not marketplace or not asin:
+        return []
+    sku = str(filters.get("sku") or "").strip() or f"ADHOC-{marketplace}-{asin}"
+    product_name = f"Public Amazon ASIN {asin}"
+    keyword = "desk lamp" if marketplace == "US" else product_name
+    return [
+        {
+            "marketplace": marketplace,
+            "sku": sku,
+            "asin": asin,
+            "product_name": product_name,
+            "product_url": marketplace_product_url(marketplace, asin),
+            "frontend_core_keyword": keyword,
+            "frontend_search_url": marketplace_search_url(marketplace, keyword),
+            "frontend_check_status": "待前台检查",
+            "frontend_check_focus": "价格；Coupon；Buy Box；评分；评论；配送；前三竞品",
+            "questions_to_check": "价格是否有优势；Coupon 是否明确；Buy Box 是否正常；评分评论是否弱于竞品",
+            "suspected_issue": "临时公开 ASIN 测试行，仅用于本地服务功能验证。",
+            "source_role": "ad_hoc_public_test",
+            "priority": "P1",
+        }
+    ]
