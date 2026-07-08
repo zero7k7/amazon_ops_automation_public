@@ -21,12 +21,12 @@ from urllib.parse import parse_qs, urlparse
 from openpyxl import load_workbook
 
 try:
-    from scripts.chrome_cdp_helper import DEFAULT_CHROME_PATH
     from scripts.chrome_cdp_helper import DEFAULT_ENDPOINT as CHROME_CDP_ENDPOINT
+    from scripts.chrome_cdp_helper import MAC_CHROME_APP
     from scripts.chrome_cdp_helper import endpoint_available as _chrome_cdp_endpoint_available
 except ModuleNotFoundError:  # pragma: no cover - used when executed as scripts/report_action_server.py
-    from chrome_cdp_helper import DEFAULT_CHROME_PATH
     from chrome_cdp_helper import DEFAULT_ENDPOINT as CHROME_CDP_ENDPOINT
+    from chrome_cdp_helper import MAC_CHROME_APP
     from chrome_cdp_helper import endpoint_available as _chrome_cdp_endpoint_available
 
 
@@ -35,6 +35,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.autoopt_feedback import add_action_identity, is_executable_action
+from src.sellersprite_competitor_discovery import (
+    SELLERSPRITE_COMPETITOR_DISCOVERY_CACHE_PATH,
+    discovery_record_needs_refresh,
+    load_competitor_discovery_records,
+)
+from src.sellersprite_fusion import load_sellersprite_records
+from src.sellersprite_history import sellersprite_cache_max_age_days_for_row, upsert_sellersprite_history
+from scripts.frontend_check_results import boolish_flag
+from scripts.sellersprite_reverse_asin_fetch import _cached_recent as _sellersprite_cached_recent
+from scripts.sellersprite_reverse_asin_fetch import _competitor_rows as _sellersprite_competitor_rows
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -90,10 +100,26 @@ REPORT_LINKS = {
     "de_report": f"{REPORT_BASE_URL}/de_report.html",
 }
 FRONTEND_QUEUE_ACCEPTANCE_THRESHOLD = 0.80
+FRONTEND_RETRY_BATCH_LIMIT = 3
+FRONTEND_RETRY_MAX_BATCH_LIMIT = 7
+SELLERSPRITE_REVERSE_ASIN_TARGET_COUNT = 20
+SELLERSPRITE_STATUS_SUMMARY_KEYS = (
+    "sellersprite_queue_total",
+    "sellersprite_cached_count",
+    "sellersprite_missing_count",
+    "sellersprite_cached_labels",
+    "sellersprite_missing_labels",
+    "sellersprite_discovery_queue_total",
+    "sellersprite_discovery_cached_count",
+    "sellersprite_discovery_missing_count",
+    "sellersprite_discovery_cached_labels",
+    "sellersprite_discovery_missing_labels",
+)
 ENABLE_BROWSER_FRONTEND_ENV = "AMAZON_OPS_ENABLE_BROWSER_FRONTEND"
 FEEDBACK_INPUT_FILENAME = "autoopt_feedback_input.json"
 FEEDBACK_AUDIT_PREFIX = "feedback_audit_log"
 SIDE_EFFECT_GET_PATHS = {
+    "/run/report-refresh",
     "/run/frontend-retry",
     "/run/frontend-check-one",
     "/run/battle-diagnosis-one",
@@ -103,6 +129,7 @@ SIDE_EFFECT_POST_PATHS = {
     "/upload/config",
     "/apply/config",
     "/copy/text",
+    "/run/report-refresh",
     "/run/daily-update",
     "/run/frontend-retry",
     "/run/frontend-check-one",
@@ -117,13 +144,17 @@ LOCAL_CORS_ORIGINS = {
 
 _lock = threading.Lock()
 _frontend_async_lock = threading.Lock()
+_sellersprite_async_lock = threading.Lock()
 _last_result: dict[str, object] = {"running": False, "message": "ready"}
 _frontend_async_status: dict[str, object] = {"running": False, "message": "P0 前台后台检查未运行。"}
+_sellersprite_async_status: dict[str, object] = {"running": False, "message": "卖家精灵后台反查未运行。"}
 _RUNTIME_STATUS_KEYS = {"detail", "elapsed_seconds", "started_at_epoch", "step", "total_steps"}
 _LEGACY_FRONTEND_RETRY_FAILURES = (
     "前台数据重试失败：urllib 读取 Amazon 前台",
     "前台数据重试失败：",
 )
+_REPORT_RESTORE_MARKER = "[restore] report outputs restored to pre-report snapshot after failure"
+_REPORT_REFRESH_BLOCKER_MARKER = "[fail] report refresh blocker:"
 
 
 def _browser_frontend_enabled() -> bool:
@@ -141,7 +172,14 @@ def _frontend_method_label() -> str:
     return "Chrome CDP 后台" if _browser_frontend_enabled() else "urllib 静默"
 
 
-def _frontend_command(*, priority: str = "", require_competitor_samples: bool = False, search_policy: str = "ad-driven") -> list[str]:
+def _frontend_command(
+    *,
+    priority: str = "",
+    require_competitor_samples: bool = False,
+    search_policy: str = "always",
+    limit: int | None = None,
+    only_stale: bool = True,
+) -> list[str]:
     method = _frontend_refresh_method()
     command = [
         sys.executable,
@@ -149,13 +187,14 @@ def _frontend_command(*, priority: str = "", require_competitor_samples: bool = 
         "--method",
         method,
         "--timeout",
-        "30",
+        "18",
         "--sleep",
-        "1.5",
+        "0.5",
         "--search-policy",
         search_policy,
-        "--only-stale",
     ]
+    if only_stale:
+        command.append("--only-stale")
     if method == "chrome-cdp":
         command.extend(["--cdp-endpoint", CHROME_CDP_ENDPOINT, "--cdp-attempts", "1"])
     else:
@@ -164,6 +203,40 @@ def _frontend_command(*, priority: str = "", require_competitor_samples: bool = 
         command.append("--require-competitor-samples")
     if priority:
         command.extend(["--priority", priority])
+    command.extend(["--limit", str(limit or FRONTEND_RETRY_BATCH_LIMIT)])
+    return command
+
+
+def _frontend_refresh_batch_limit(needed: int) -> int:
+    if needed <= 0:
+        return FRONTEND_RETRY_BATCH_LIMIT
+    return min(max(needed, FRONTEND_RETRY_BATCH_LIMIT), FRONTEND_RETRY_MAX_BATCH_LIMIT)
+
+
+def _sellersprite_reverse_command(*, priority: str = "", params: dict[str, str] | None = None) -> list[str]:
+    command = [
+        sys.executable,
+        "scripts/sellersprite_reverse_asin_fetch.py",
+        "--target-count",
+        str(SELLERSPRITE_REVERSE_ASIN_TARGET_COUNT),
+        "--include-competitors",
+        "--competitor-limit-per-product",
+        "3",
+        "--competitor-cache-days",
+        "7",
+    ]
+    params = params or {}
+    marketplace = str(params.get("marketplace") or "").strip().upper()
+    sku = str(params.get("sku") or "").strip()
+    asin = str(params.get("asin") or "").strip().upper()
+    if priority:
+        command.extend(["--priority", priority])
+    if marketplace:
+        command.extend(["--marketplace", marketplace])
+    if sku:
+        command.extend(["--sku", sku])
+    if asin:
+        command.extend(["--asin", asin])
     return command
 
 
@@ -212,6 +285,44 @@ def _load_submission_status() -> dict[str, object]:
     return payload if isinstance(payload, dict) else _base_status()
 
 
+def _clear_stale_running_status_on_startup() -> None:
+    payload = _load_submission_status()
+    cleaned = _strip_runtime_status(payload) if payload.get("running") else dict(payload)
+    if payload.get("running"):
+        cleaned.update(
+            {
+                "running": False,
+                "message": "上次本地任务已随服务重启中断；请重新点击按钮启动。",
+                "returncode": -15,
+                "status_scope": str(payload.get("status_scope") or "local_workflow_interrupted"),
+                "failure_mode": "local_service_restarted",
+                "updated_at_epoch": time.time(),
+            }
+        )
+    elif cleaned.get("status_scope") == "frontend_retry" and str(cleaned.get("failure_mode") or "").startswith("chrome_cdp_frontend_check_timeout"):
+        cleaned.update(
+            {
+                "running": False,
+                "message": "前台刷新未运行；上次本轮刷新超时已结束，下次点击会按 3 个一批继续刷新。",
+                "returncode": 0,
+                "original_returncode": cleaned.get("returncode") or 124,
+                "soft_failure": True,
+                "failure_mode": "chrome_cdp_frontend_check_timeout_partial",
+                "updated_at_epoch": time.time(),
+            }
+        )
+    elif cleaned.get("status_scope") == "frontend_retry" and cleaned.get("failure_mode") == "frontend_refresh_not_needed":
+        cleaned = _fresh_status(
+            "前台刷新未运行；点击按钮会重新读取当前队列。",
+            status_scope="frontend_retry_idle",
+            failure_mode="frontend_retry_stale_result_cleared",
+            updated_at_epoch=time.time(),
+        )
+    cleaned["frontend_async_status"] = {"running": False, "message": "P0 前台后台检查未运行。"}
+    cleaned["sellersprite_async_status"] = {"running": False, "message": "卖家精灵后台反查未运行。"}
+    _write_submission_status(cleaned)
+
+
 def _fresh_status(message: str, **extra: object) -> dict[str, object]:
     return {
         "running": False,
@@ -230,10 +341,44 @@ def _strip_runtime_status(payload: dict[str, object]) -> dict[str, object]:
     return cleaned
 
 
+def _latest_recommendations_available() -> bool:
+    path = OUTPUT_DIR / "latest_recommendations.html"
+    try:
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _daily_update_restored_report_failure(payload: dict[str, object], message: str, detail: str) -> bool:
+    if payload.get("returncode") in (None, 0):
+        return False
+    combined = "\n".join(
+        str(payload.get(key) or "")
+        for key in ("stdout_tail", "stderr_tail")
+    )
+    return (
+        "daily update 失败" in message
+        and _REPORT_RESTORE_MARKER in combined
+        and (_REPORT_REFRESH_BLOCKER_MARKER in combined or "report refresh blocker" in combined or "missing parseable date" in combined or "missing parseable date" in detail)
+        and _latest_recommendations_available()
+    )
+
+
 def _normalize_status_payload(payload: dict[str, object]) -> dict[str, object]:
     cleaned = dict(payload)
     message = str(cleaned.get("message") or "")
     detail = str(cleaned.get("detail") or "")
+    if _daily_update_restored_report_failure(cleaned, message, detail):
+        cleaned["original_returncode"] = cleaned.get("returncode")
+        cleaned["returncode"] = 0
+        cleaned["message"] = (
+            "报告可用：上次 daily update 被导入校验拦截，已恢复到失败前报告；"
+            "请修正缺少日期的导入文件后再刷新。"
+        )
+        cleaned["status_scope"] = "daily_update_restored_report"
+        cleaned["failure_mode"] = "import_manifest_date_blocker_restored_report"
+        cleaned["soft_failure"] = True
+        return cleaned
     is_legacy_frontend_retry = any(marker in message for marker in _LEGACY_FRONTEND_RETRY_FAILURES)
     is_legacy_chrome_retry = "真实 Chrome 20次前台检查" in message or "真实 Chrome CDP 20次前台检查" in message
     is_legacy_twenty_gate_message = "当前前台队列 20次验收" in message or "当前前台队列 Chrome CDP 20次验收" in message
@@ -270,6 +415,27 @@ def _normalize_status_payload(payload: dict[str, object]) -> dict[str, object]:
             )
             if cleaned.get("returncode") not in (None, 0):
                 cleaned["soft_failure"] = True
+    if cleaned.get("status_scope") == "frontend_retry" and "当前前台队列刷新" in message:
+        summary = _frontend_queue_status_summary()
+        summary.update(_frontend_refresh_result_summary())
+        for key in (
+            "frontend_refresh_total",
+            "frontend_refresh_live_checked",
+            "frontend_refresh_skipped",
+            "frontend_refresh_cache_used",
+            "frontend_refresh_failed",
+        ):
+            if cleaned.get(key) not in (None, ""):
+                summary[key] = cleaned.get(key)
+        status_message = _frontend_retry_status_message(summary)
+        if status_message:
+            cleaned.update(summary)
+            cleaned["message"] = status_message
+            cleaned["failure_mode"] = (
+                "chrome_cdp_frontend_check_passed_with_pending"
+                if summary.get("frontend_queue_passed") and int(summary.get("frontend_pending_count") or 0)
+                else ("chrome_cdp_frontend_check_passed" if summary.get("frontend_queue_passed") else "chrome_cdp_frontend_check_partial")
+            )
     if (
         cleaned.get("returncode") not in (None, 0)
         and cleaned.get("status_scope") == "frontend_retry"
@@ -300,6 +466,8 @@ def _sync_last_result(payload: dict[str, object]) -> None:
     _last_result = payload
     if "frontend_async_status" not in payload and _frontend_async_status:
         payload = {**payload, "frontend_async_status": _frontend_async_status}
+    if "sellersprite_async_status" not in payload and _sellersprite_async_status:
+        payload = {**payload, "sellersprite_async_status": _sellersprite_async_status}
     _write_submission_status(payload)
 
 
@@ -327,6 +495,21 @@ def _sync_frontend_async_status(payload: dict[str, object]) -> None:
     _write_submission_status(persisted)
 
 
+def _sellersprite_summary_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {key: payload[key] for key in SELLERSPRITE_STATUS_SUMMARY_KEYS if key in payload}
+
+
+def _sync_sellersprite_async_status(payload: dict[str, object]) -> None:
+    global _sellersprite_async_status, _last_result
+    _sellersprite_async_status = {**payload, "updated_at_epoch": time.time()}
+    summary = _sellersprite_summary_from_payload(payload)
+    _last_result = {**_last_result, **summary, "sellersprite_async_status": _sellersprite_async_status}
+    persisted = _load_submission_status()
+    persisted.update(summary)
+    persisted["sellersprite_async_status"] = _sellersprite_async_status
+    _write_submission_status(persisted)
+
+
 def _set_frontend_async_progress(message: str, step: int, total: int, detail: str = "") -> None:
     now = time.time()
     started_at = float(_frontend_async_status.get("started_at_epoch") or now)
@@ -346,7 +529,20 @@ def _set_frontend_async_progress(message: str, step: int, total: int, detail: st
 
 
 def _run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    try:
+        return subprocess.run(command, cwd=ROOT, env=_subprocess_env(), capture_output=True, text=True, timeout=timeout)
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", f"cannot start command: {exc}")
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    parts = [str(ROOT)]
+    if existing:
+        parts.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    return env
 
 
 def _run_command_with_status(
@@ -359,14 +555,18 @@ def _run_command_with_status(
 ) -> subprocess.CompletedProcess[str]:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=_subprocess_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", f"cannot start command: {exc}")
     deadline = time.monotonic() + timeout
     last_status_at = 0.0
     streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
@@ -438,14 +638,18 @@ def _run_frontend_command_with_progress(
 ) -> subprocess.CompletedProcess[str]:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=_subprocess_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", f"cannot start command: {exc}")
     deadline = time.monotonic() + timeout
     streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
     try:
@@ -491,13 +695,11 @@ def _chrome_cdp_available(endpoint: str = CHROME_CDP_ENDPOINT) -> bool:
 def _start_chrome_cdp_if_needed(endpoint: str = CHROME_CDP_ENDPOINT, wait_seconds: float = 12.0) -> bool:
     if _chrome_cdp_available(endpoint):
         return True
-    chrome_path = os.environ.get("AMAZON_OPS_CHROME_PATH", "").strip() or DEFAULT_CHROME_PATH
-    if not Path(chrome_path).exists():
+    if not Path(MAC_CHROME_APP).exists():
         return False
     profile_dir = OUTPUT_DIR / "chrome_cdp_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    command = [
-        chrome_path,
+    chrome_args = [
         "--remote-debugging-port=9222",
         f"--user-data-dir={profile_dir}",
         "--no-first-run",
@@ -506,18 +708,22 @@ def _start_chrome_cdp_if_needed(endpoint: str = CHROME_CDP_ENDPOINT, wait_second
         "--window-size=1280,900",
         "about:blank",
     ]
+    command = [
+        "/usr/bin/open",
+        "-g",
+        "-na",
+        "Google Chrome",
+        "--args",
+        *chrome_args,
+    ]
     log_path = OUTPUT_DIR / "chrome_cdp_launch.log"
     log_file = log_path.open("a", encoding="utf-8")
-    popen_kwargs: dict[str, object] = {
-        "cwd": ROOT,
-        "stdout": log_file,
-        "stderr": subprocess.STDOUT,
-    }
-    if os.name == "nt":
-        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        popen_kwargs["start_new_session"] = True
-    subprocess.Popen(command, **popen_kwargs)
+    try:
+        subprocess.Popen(command, cwd=ROOT, env=_subprocess_env(), stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True)
+    except OSError as exc:
+        log_file.write(f"cannot start Chrome CDP: {exc}\n")
+        log_file.close()
+        return False
     deadline = time.monotonic() + max(wait_seconds, 1.0)
     while time.monotonic() < deadline:
         if _chrome_cdp_available(endpoint):
@@ -539,6 +745,29 @@ def _status_payload() -> dict[str, object]:
     payload = _normalize_status_payload(payload)
     if "frontend_async_status" not in payload and _frontend_async_status:
         payload["frontend_async_status"] = _frontend_async_status
+    if "sellersprite_async_status" not in payload and _sellersprite_async_status:
+        payload["sellersprite_async_status"] = _sellersprite_async_status
+    seller_status = payload.get("sellersprite_async_status")
+    if isinstance(seller_status, dict) and not seller_status.get("running"):
+        seller_message = str(seller_status.get("message") or "")
+        try:
+            seller_summary = _sellersprite_reverse_needed_summary()
+        except Exception:
+            seller_summary = {}
+        if seller_summary:
+            payload.update(seller_summary)
+            missing_count = int(seller_summary.get("sellersprite_missing_count") or 0)
+            refreshed_status = {**seller_status, **seller_summary, "running": False, "status_scope": "sellersprite_async"}
+            if missing_count > 0:
+                refreshed_status.update(
+                    {
+                        "returncode": 0,
+                            "message": f"本次需抓 {missing_count} 个 ASIN。",
+                    }
+                )
+            elif int(seller_summary.get("sellersprite_queue_total") or 0) > 0:
+                refreshed_status.update({"returncode": 0, "message": "卖家精灵当前队列已有有效反查，无需重复运行。"})
+            payload["sellersprite_async_status"] = refreshed_status
     payload["report_links"] = REPORT_LINKS
     return payload
 
@@ -548,14 +777,6 @@ def _report_file_link(path: Path) -> str:
         return f"{REPORT_BASE_URL}/{path.relative_to(OUTPUT_DIR).as_posix()}"
     except ValueError:
         return ""
-
-
-def _relative_path_text(path: Path, root: Path | None = None) -> str:
-    root = ROOT if root is None else root
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _config_audit_links(kind: str) -> dict[str, str]:
@@ -574,8 +795,8 @@ def _config_status_payload() -> dict[str, object]:
         target_path = Path(config["target_path"])
         items[kind] = {
             "label": config.get("label"),
-            "target_path": _relative_path_text(target_path),
-            "pending_path": _relative_path_text(review_path),
+            "target_path": str(target_path.relative_to(ROOT)),
+            "pending_path": str(review_path.relative_to(ROOT)),
             "has_pending": review_path.exists(),
             "pending_size": review_path.stat().st_size if review_path.exists() else 0,
             "requires_confirm": bool(config.get("requires_confirm")),
@@ -928,7 +1149,7 @@ def _is_today_frontend_evidence(
         str(row.get("frontend_check_status") or "") == "已自动检查"
         and method in accepted_methods
         and _record_data_date(row) == today
-        and not bool(row.get("frontend_cache_used"))
+        and not boolish_flag(row.get("frontend_cache_used"))
     )
     if not is_today:
         return False
@@ -997,6 +1218,403 @@ def _frontend_refresh_needed_summary(priority: str = "", *, require_competitor_s
     }
 
 
+def _sellersprite_reverse_needed_summary(priority: str = "") -> dict[str, object]:
+    base_rows = _load_frontend_queue_rows(priority=priority)
+    discovery_existing = load_competitor_discovery_records(SELLERSPRITE_COMPETITOR_DISCOVERY_CACHE_PATH)
+    discovery_cached: list[str] = []
+    discovery_missing: list[str] = []
+    discovery_seen: set[tuple[str, str, str]] = set()
+    for row in base_rows:
+        key = (
+            str(row.get("marketplace") or "").strip().upper(),
+            str(row.get("sku") or "").strip(),
+            str(row.get("asin") or "").strip().upper(),
+        )
+        if not key[0] or not key[2] or key in discovery_seen:
+            continue
+        discovery_seen.add(key)
+        label = _frontend_label(row)
+        recommended_steps = str(row.get("market_survey_recommended_fetch_steps") or "")
+        discovery_gap = "补抓卖家精灵竞品池" in recommended_steps or not recommended_steps
+        if discovery_gap and discovery_record_needs_refresh(discovery_existing.get(key), max_age_days=7):
+            discovery_missing.append(label)
+        else:
+            discovery_cached.append(label)
+    rows = [
+        *base_rows,
+        *_sellersprite_competitor_rows(
+            base_rows,
+            competitor_limit_per_product=3,
+            competitor_discovery_records=discovery_existing,
+        ),
+    ]
+    existing = load_sellersprite_records(OUTPUT_DIR / "sellersprite_reverse_asin_results.json")
+    cached: list[str] = []
+    missing: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        key = (
+            str(row.get("marketplace") or "").strip().upper(),
+            str(row.get("asin") or "").strip().upper(),
+        )
+        if not key[0] or not key[1] or key in seen:
+            continue
+        seen.add(key)
+        label = _frontend_label(row)
+        recommended_steps = str(row.get("market_survey_recommended_fetch_steps") or "")
+        source_role = str(row.get("source_role") or "own").strip()
+        if source_role == "competitor":
+            reverse_gap = "补抓竞品 ASIN 反查" in recommended_steps or not recommended_steps
+        else:
+            reverse_gap = "补抓卖家精灵自己 ASIN" in recommended_steps or not recommended_steps
+        if not reverse_gap:
+            cached.append(label)
+        elif _sellersprite_cached_recent(
+            existing.get(key),
+            max_age_days=sellersprite_cache_max_age_days_for_row(row, competitor_cache_days=7),
+        ):
+            cached.append(label)
+        else:
+            missing.append(label)
+    return {
+        "sellersprite_queue_total": len(seen),
+        "sellersprite_cached_count": len(cached),
+        "sellersprite_missing_count": len(missing) + len(discovery_missing),
+        "sellersprite_cached_labels": cached,
+        "sellersprite_missing_labels": missing,
+        "sellersprite_discovery_queue_total": len(discovery_seen),
+        "sellersprite_discovery_cached_count": len(discovery_cached),
+        "sellersprite_discovery_missing_count": len(discovery_missing),
+        "sellersprite_discovery_cached_labels": discovery_cached,
+        "sellersprite_discovery_missing_labels": discovery_missing,
+    }
+
+
+def _sellersprite_progress_from_line(line: str) -> dict[str, object]:
+    text = line.strip()
+    discovery_start_match = re.search(r"\[sellersprite-discovery\]\s+(\d+)/(\d+)\s+([A-Z]{2})\s+([A-Z0-9]{8,})\s+开始竞品发现", text)
+    if discovery_start_match:
+        index = int(discovery_start_match.group(1))
+        total = int(discovery_start_match.group(2))
+        marketplace = discovery_start_match.group(3)
+        asin = discovery_start_match.group(4)
+        return {
+            "event": "discovery_start",
+            "sellersprite_discovery_step": index,
+            "sellersprite_discovery_total": total,
+            "current_label": f"{marketplace} {asin}",
+            "message": f"卖家精灵竞品发现进行中：{index}/{total} {marketplace} {asin}",
+        }
+    discovery_finish_match = re.search(
+        r"\[sellersprite-discovery\]\s+([A-Z]{2})\s+([A-Z0-9]{8,})\s+(.+?)\s+competitors=(\d+)\s+error=(.*)",
+        text,
+    )
+    if discovery_finish_match:
+        marketplace = discovery_finish_match.group(1)
+        asin = discovery_finish_match.group(2)
+        status = discovery_finish_match.group(3).strip()
+        competitor_count = int(discovery_finish_match.group(4))
+        error = discovery_finish_match.group(5).strip()
+        return {
+            "event": "discovery_finish",
+            "current_label": f"{marketplace} {asin}",
+            "competitor_discovery_status": status,
+            "competitor_discovery_count": competitor_count,
+            "last_error": error,
+            "message": f"卖家精灵竞品发现已返回：{marketplace} {asin} {status}，竞品 {competitor_count}",
+        }
+    discovery_skipped_match = re.search(r"\[sellersprite-discovery\]\s+skipped cached rows:\s+(\d+)", text)
+    if discovery_skipped_match:
+        skipped = int(discovery_skipped_match.group(1))
+        return {
+            "event": "discovery_skip_cached",
+            "sellersprite_discovery_skipped_cached": skipped,
+            "message": f"卖家精灵竞品发现跳过已有缓存：{skipped} 个",
+        }
+    discovery_wrote_match = re.search(r"\[sellersprite-discovery\]\s+wrote\s+(.+?);\s+success=(\d+)/(\d+)\s+cached_cover=(\d+)/(\d+)", text)
+    if discovery_wrote_match:
+        success = int(discovery_wrote_match.group(2))
+        total = int(discovery_wrote_match.group(3))
+        covered = int(discovery_wrote_match.group(4))
+        cover_total = int(discovery_wrote_match.group(5))
+        return {
+            "event": "discovery_wrote",
+            "sellersprite_discovery_success_count": success,
+            "sellersprite_discovery_processed_count": total,
+            "sellersprite_discovery_cached_cover": covered,
+            "sellersprite_discovery_cached_cover_total": cover_total,
+            "message": f"卖家精灵竞品发现写入缓存：成功 {success}/{total}，覆盖 {covered}/{cover_total}",
+        }
+    start_match = re.search(r"\[sellersprite\]\s+(\d+)/(\d+)\s+([A-Z]{2})\s+([A-Z0-9]{8,})\s+开始反查", text)
+    if start_match:
+        index = int(start_match.group(1))
+        total = int(start_match.group(2))
+        marketplace = start_match.group(3)
+        asin = start_match.group(4)
+        return {
+            "event": "start",
+            "step": index,
+            "total_steps": total,
+            "current_label": f"{marketplace} {asin}",
+            "message": f"卖家精灵后台反查进行中：{index}/{total} {marketplace} {asin}",
+        }
+    finish_match = re.search(
+        r"\[sellersprite\]\s+([A-Z]{2})\s+([A-Z0-9]{8,})\s+(.+?)\s+captured=(\d+)\s+total=([^\s]*)\s+error=(.*)",
+        text,
+    )
+    if finish_match:
+        marketplace = finish_match.group(1)
+        asin = finish_match.group(2)
+        status = finish_match.group(3).strip()
+        captured = int(finish_match.group(4))
+        reported_total = finish_match.group(5)
+        error = finish_match.group(6).strip()
+        return {
+            "event": "finish",
+            "current_label": f"{marketplace} {asin}",
+            "record_status": status,
+            "captured_count": captured,
+            "reported_total": reported_total,
+            "last_error": error,
+            "message": f"卖家精灵后台反查已返回：{marketplace} {asin} {status}，抓词 {captured}",
+        }
+    skipped_match = re.search(r"\[sellersprite\]\s+skipped cached rows:\s+(\d+)", text)
+    if skipped_match:
+        skipped = int(skipped_match.group(1))
+        return {
+            "event": "skip_cached",
+            "sellersprite_skipped_cached": skipped,
+            "message": f"卖家精灵后台反查跳过已有缓存：{skipped} 个",
+        }
+    wrote_match = re.search(r"\[sellersprite\]\s+wrote\s+(.+?);\s+success=(\d+)/(\d+)", text)
+    if wrote_match:
+        success = int(wrote_match.group(2))
+        total = int(wrote_match.group(3))
+        return {
+            "event": "wrote",
+            "sellersprite_success_count": success,
+            "sellersprite_processed_count": total,
+            "message": f"卖家精灵后台反查写入缓存：成功 {success}/{total}",
+        }
+    return {"event": "log", "message": text} if text else {}
+
+
+def _run_sellersprite_command_with_progress(command: list[str], timeout: int, label: str) -> subprocess.CompletedProcess[str]:
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    started_at = time.time()
+    processed = 0
+    success = 0
+    failed = 0
+    last_progress: dict[str, object] = {}
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=_subprocess_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, "", f"cannot start command: {exc}")
+
+    deadline = time.monotonic() + timeout
+    last_status_at = 0.0
+    streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
+
+    def publish(message: str | None = None, *, force: bool = False, extra: dict[str, object] | None = None) -> None:
+        nonlocal last_status_at
+        now = time.monotonic()
+        if not force and now - last_status_at < 1.0:
+            return
+        last_status_at = now
+        payload = {
+            **_sellersprite_async_status,
+            "running": True,
+            "message": message or str(last_progress.get("message") or f"卖家精灵后台反查运行中：{label}"),
+            "detail": " ".join(command),
+            "started_at_epoch": started_at,
+            "elapsed_seconds": max(0, int(time.time() - started_at)),
+            "stdout_tail": "".join(stdout_parts)[-4000:],
+            "stderr_tail": "".join(stderr_parts)[-4000:],
+            "sellersprite_processed_count": processed,
+            "sellersprite_success_count": success,
+            "sellersprite_failed_count": failed,
+            "status_scope": "sellersprite_async",
+        }
+        if extra:
+            payload.update(extra)
+        _sync_sellersprite_async_status(payload)
+
+    try:
+        while streams and process.poll() is None:
+            if time.monotonic() > deadline:
+                process.kill()
+                raise subprocess.TimeoutExpired(command, timeout, output="".join(stdout_parts), stderr="".join(stderr_parts))
+            readable, _, _ = select.select(streams, [], [], 0.25)
+            if not readable:
+                publish()
+                continue
+            for stream in readable:
+                line = stream.readline()
+                if not line:
+                    streams.remove(stream)
+                    continue
+                if stream is process.stdout:
+                    stdout_parts.append(line)
+                    progress = _sellersprite_progress_from_line(line)
+                    if progress:
+                        last_progress.update(progress)
+                        if progress.get("event") == "finish":
+                            processed += 1
+                            if str(progress.get("record_status") or "") == "已抓取":
+                                success += 1
+                            else:
+                                failed += 1
+                        publish(str(progress.get("message") or "").strip() or None, force=True, extra=progress)
+                    else:
+                        publish(force=True)
+                else:
+                    stderr_parts.append(line)
+                    publish(force=True, extra={"message": f"卖家精灵后台反查 stderr：{line.strip()[:120]}"})
+        remaining_stdout, remaining_stderr = process.communicate(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        remaining_stdout, remaining_stderr = process.communicate()
+        stdout_parts.append(remaining_stdout or "")
+        stderr_parts.append(remaining_stderr or "")
+        raise subprocess.TimeoutExpired(command, timeout, output="".join(stdout_parts), stderr="".join(stderr_parts))
+    stdout_parts.append(remaining_stdout or "")
+    stderr_parts.append(remaining_stderr or "")
+    publish(force=True)
+    return subprocess.CompletedProcess(command, process.returncode or 0, "".join(stdout_parts), "".join(stderr_parts))
+
+
+def _run_sellersprite_reverse_async(command: list[str], label: str) -> None:
+    log_path = OUTPUT_DIR / "sellersprite_reverse_async.log"
+    started_at = time.time()
+    try:
+        _sync_sellersprite_async_status(
+            {
+                "running": True,
+                "message": f"卖家精灵后台反查已启动：{label}",
+                "detail": " ".join(command),
+                "started_at_epoch": started_at,
+                "elapsed_seconds": 0,
+                "status_scope": "sellersprite_async",
+            }
+        )
+        completed = _run_sellersprite_command_with_progress(command, timeout=1200, label=label)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            "\n".join(
+                [
+                    f"[command] {' '.join(command)}",
+                    f"[returncode] {completed.returncode}",
+                    "[stdout]",
+                    completed.stdout,
+                    "[stderr]",
+                    completed.stderr,
+                ]
+            ),
+            encoding="utf-8",
+        )
+        refresh_returncode = None
+        if completed.returncode == 0:
+            if _lock.acquire(blocking=False):
+                try:
+                    _sync_sellersprite_async_status(
+                        {
+                            **_sellersprite_async_status,
+                            "running": True,
+                            "message": "卖家精灵后台反查已完成，正在刷新 HTML / Excel 报告。",
+                            "elapsed_seconds": max(0, int(time.time() - started_at)),
+                            "status_scope": "sellersprite_async",
+                        }
+                    )
+                    refresh = _run_command([sys.executable, "main.py", "--marketplace", "ALL"], timeout=180)
+                    refresh_returncode = refresh.returncode
+                finally:
+                    _lock.release()
+        elapsed = max(0, int(time.time() - started_at))
+        try:
+            seller_summary = _sellersprite_reverse_needed_summary()
+        except Exception:
+            seller_summary = {}
+        _sync_sellersprite_async_status(
+            {
+                "running": False,
+                "message": (
+                    "卖家精灵后台反查完成，报告已刷新。"
+                    if completed.returncode == 0 and refresh_returncode == 0
+                    else "卖家精灵后台反查完成；报告将在下次刷新后显示最新融合结果。"
+                    if completed.returncode == 0
+                    else "卖家精灵后台反查失败；已保留旧缓存，不影响前台检查。"
+                ),
+                "returncode": completed.returncode,
+                "refresh_returncode": refresh_returncode,
+                "elapsed_seconds": elapsed,
+                "stdout_tail": completed.stdout[-2000:],
+                "stderr_tail": completed.stderr[-2000:],
+                "log_path": str(log_path.relative_to(ROOT)),
+                "status_scope": "sellersprite_async",
+                **seller_summary,
+            }
+        )
+    except subprocess.TimeoutExpired as exc:
+        _sync_sellersprite_async_status(
+            _timeout_payload(
+                "卖家精灵后台反查超时；已保留旧缓存，不影响前台检查。",
+                exc,
+                status_scope="sellersprite_async",
+                failure_mode="sellersprite_reverse_timeout",
+            )
+        )
+    finally:
+        _sellersprite_async_lock.release()
+
+
+def _start_sellersprite_reverse_async(*, priority: str = "", params: dict[str, str] | None = None) -> dict[str, object]:
+    if not _sellersprite_async_lock.acquire(blocking=False):
+        return {
+            **_sellersprite_async_status,
+            "running": True,
+            "message": "卖家精灵后台反查已在运行。",
+            "status_scope": "sellersprite_async",
+        }
+    summary = _sellersprite_reverse_needed_summary(priority=priority) if not params else {}
+    if not params and int(summary.get("sellersprite_missing_count") or 0) == 0:
+        snapshot_count = _snapshot_cached_sellersprite_queue(priority=priority)
+        payload = {
+            "running": False,
+            "message": "卖家精灵后台反查无需运行：当前前台队列已有缓存。",
+            "returncode": 0,
+            "status_scope": "sellersprite_async",
+            "sellersprite_history_snapshot_count": snapshot_count,
+            **summary,
+        }
+        _sync_sellersprite_async_status(payload)
+        _sellersprite_async_lock.release()
+        return payload
+    command = _sellersprite_reverse_command(priority=priority, params=params)
+    label = "单产品" if params else "当前前台队列"
+    payload = {
+        "running": True,
+        "message": f"卖家精灵后台反查已排队：{label}",
+        "detail": " ".join(command),
+        "started_at_epoch": time.time(),
+        "elapsed_seconds": 0,
+        "status_scope": "sellersprite_async",
+        **summary,
+    }
+    _sync_sellersprite_async_status(payload)
+    thread = threading.Thread(target=_run_sellersprite_reverse_async, args=(command, label), daemon=True)
+    thread.start()
+    return payload
+
+
 def _frontend_refresh_result_summary() -> dict[str, object]:
     path = OUTPUT_DIR / "frontend_check_results.json"
     try:
@@ -1007,6 +1625,67 @@ def _frontend_refresh_result_summary() -> dict[str, object]:
         return {}
     summary = payload.get("refresh_summary") or {}
     return dict(summary) if isinstance(summary, dict) else {}
+
+
+def _snapshot_cached_sellersprite_queue(priority: str = "") -> int:
+    base_rows = _load_frontend_queue_rows(priority=priority)
+    discovery_existing = load_competitor_discovery_records(SELLERSPRITE_COMPETITOR_DISCOVERY_CACHE_PATH)
+    rows = [
+        *base_rows,
+        *_sellersprite_competitor_rows(
+            base_rows,
+            competitor_limit_per_product=3,
+            competitor_discovery_records=discovery_existing,
+        ),
+    ]
+    existing = load_sellersprite_records(OUTPUT_DIR / "sellersprite_reverse_asin_results.json")
+    snapshots: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    today = _today_iso()
+    for row in rows:
+        market = str(row.get("marketplace") or "").strip().upper()
+        asin = str(row.get("asin") or "").strip().upper()
+        parent_asin = str(row.get("parent_asin") or "").strip().upper()
+        key = (market, asin)
+        seen_key = (market, asin, parent_asin)
+        if not market or not asin or seen_key in seen:
+            continue
+        seen.add(seen_key)
+        record = existing.get(key)
+        if record:
+            snapshot = dict(record)
+            for field in [
+                "marketplace",
+                "sku",
+                "asin",
+                "source_role",
+                "parent_marketplace",
+                "parent_sku",
+                "parent_asin",
+                "parent_product_name",
+                "competitor_discovery_source",
+                "competitor_pool_confidence",
+                "competitor_source_keyword",
+            ]:
+                value = row.get(field)
+                if value not in (None, ""):
+                    snapshot[field] = value
+            data_date = str(snapshot.get("data_date") or snapshot.get("checked_at") or "")[:10]
+            status = "已抓取" if data_date == today else "沿用缓存"
+            snapshots.append({**snapshot, "seller_sprite_check_status": status})
+        elif str(row.get("source_role") or "") == "competitor":
+            snapshots.append(
+                {
+                    **row,
+                    "seller_sprite_check_status": "竞品池快照",
+                    "data_date": today,
+                    "checked_at": datetime.now().isoformat(timespec="seconds"),
+                    "source": "sellersprite_competitor_pool_snapshot",
+                    "keywords": [],
+                }
+            )
+    upsert_sellersprite_history(snapshots)
+    return len(snapshots)
 
 
 def _frontend_queue_status_summary(priority: str = "") -> dict[str, object]:
@@ -1024,7 +1703,7 @@ def _frontend_queue_status_summary(priority: str = "") -> dict[str, object]:
         is_live_checked = _is_today_frontend_evidence(row, today)
         is_stability_passed = (
             is_live_checked
-            and bool(row.get("frontend_stability_passed"))
+            and boolish_flag(row.get("frontend_stability_passed"))
             and int(row.get("frontend_stability_total_attempts") or 0) >= 20
             and float(row.get("frontend_stability_success_rate") or 0) >= 0.8
         )
@@ -1065,30 +1744,28 @@ def _frontend_retry_status_message(summary: dict[str, object]) -> str:
     pending_text = "、".join(pending_labels[:3])
     if len(pending_labels) > 3:
         pending_text += f" 等 {len(pending_labels)} 个"
-    rate_text = f"{success_rate:.0%}"
-    threshold_text = f"{threshold:.0%}"
     if refresh_total and skipped == refresh_total and not refreshed and not cache_used and not failed:
-        return f"无需刷新：{skipped}/{refresh_total} 个已有今日前台证据；未访问 Amazon。"
+        return f"无需刷新：本轮队列 {skipped}/{refresh_total} 已有今日证据。"
     if refresh_total:
-        prefix = "通过" if success_rate >= threshold else "未达标"
-        message = (
-            f"当前前台队列刷新{prefix}：新读 {refreshed} 个，跳过 {skipped} 个，"
-            f"沿用缓存 {cache_used} 个，失败 {failed} 个；今日证据 {passed}/{total}，"
-            f"队列成功率 {rate_text}，门槛 {threshold_text}。"
-        )
+        prefix = "调查完成" if success_rate >= threshold else "调查待补"
+        message = f"{prefix}：本轮队列 {passed}/{total}，新读 {refreshed}，失败 {failed}"
+        if pending:
+            message += f"，待补 {pending}"
+        elif cache_used:
+            message += f"，缓存 {cache_used}"
+        message += "。"
         if pending and pending_text:
-            message += f" 待检查：{pending_text}"
+            message += f" 待补：{pending_text}"
         return message
     if not passed:
         return ""
     if pending:
-        prefix = "通过" if success_rate >= threshold else "未达标"
+        prefix = "调查完成" if success_rate >= threshold else "调查待补"
         return (
-            f"当前前台队列刷新{prefix}：{passed}/{total} 个已读取，队列成功率 {rate_text}，门槛 {threshold_text}；"
-            f"{pending} 个保留待前台检查。报告已刷新"
-            + (f"；待检查：{pending_text}" if pending_text else "。")
+            f"{prefix}：本轮队列 {passed}/{total}，待补 {pending}。"
+            + (f" 待补：{pending_text}" if pending_text else "")
         )
-    return f"当前前台队列刷新通过：{passed}/{total} 个已读取，队列成功率 {rate_text}，门槛 {threshold_text}；报告已刷新。"
+    return f"调查完成：本轮队列 {passed}/{total}。"
 
 
 def _frontend_async_status_message(summary: dict[str, object]) -> str:
@@ -1217,7 +1894,7 @@ def _apply_pending_config(kind: str) -> tuple[dict[str, object], subprocess.Comp
     review_path = Path(config["review_path"])
     target_path = Path(config["target_path"])
     if not review_path.exists():
-        raise FileNotFoundError(f"没有待应用配置：{_relative_path_text(review_path)}")
+        raise FileNotFoundError(f"没有待应用配置：{review_path.relative_to(ROOT)}")
     errors = _validate_config_workbook(kind, review_path)
     if errors:
         raise ValueError("；".join(errors))
@@ -1232,8 +1909,8 @@ def _apply_pending_config(kind: str) -> tuple[dict[str, object], subprocess.Comp
         completed = _run_command([sys.executable, "scripts/validate_showcase_mvp.py"], timeout=900)
     return {
         "kind": kind,
-        "target_path": _relative_path_text(target_path),
-        "archive_path": _relative_path_text(archive_path) if archive_path else "",
+        "target_path": str(target_path.relative_to(ROOT)),
+        "archive_path": str(archive_path.relative_to(ROOT)) if archive_path else "",
         "refresh_returncode": completed.returncode if completed else None,
         "stdout_tail": completed.stdout[-4000:] if completed else "",
         "stderr_tail": completed.stderr[-4000:] if completed else "",
@@ -1281,7 +1958,7 @@ def _save_uploaded_files(form: cgi.FieldStorage) -> tuple[list[dict[str, object]
             {
                 "original_filename": filename,
                 "saved_filename": target_path.name,
-                "path": _relative_path_text(target_path),
+                "path": str(target_path.relative_to(ROOT)),
                 "size": len(raw),
             }
         )
@@ -1320,7 +1997,7 @@ def _save_config_upload(form: cgi.FieldStorage, kind: str) -> tuple[dict[str, ob
         "label": str(config.get("label") or kind),
         "original_filename": filename,
         "saved_filename": review_path.name,
-        "path": _relative_path_text(review_path),
+        "path": str(review_path.relative_to(ROOT)),
         "size": len(raw),
         "requires_confirm": bool(config.get("requires_confirm")),
     }, []
@@ -1363,21 +2040,57 @@ def _run_daily_update() -> None:
         _lock.release()
 
 
+def _run_report_refresh() -> None:
+    global _last_result
+    python = sys.executable
+    try:
+        _set_progress("刷新报告", 1, 1, f"{python} main.py --marketplace ALL")
+        completed = _run_command_with_status(
+            [python, "main.py", "--marketplace", "ALL"],
+            timeout=180,
+            step=1,
+            total_steps=1,
+            message="刷新报告",
+        )
+        payload = _completed_payload(
+            completed,
+            "报告刷新完成，广告完成记录已进入冷却和复盘。",
+            "报告刷新失败，请查看输出摘要。",
+            status_scope="report_refresh",
+            frontend_async_status={
+                "running": False,
+                "message": "轻量报告刷新未访问 Amazon 前台；如需实时前台证据，请用前台证据区刷新按钮。",
+                "returncode": 0,
+                "status_scope": "frontend_async",
+            },
+        )
+        _sync_last_result(payload)
+    except subprocess.TimeoutExpired as exc:
+        _sync_last_result(_timeout_payload("报告刷新超时，已保留当前报告。", exc, status_scope="report_refresh"))
+    finally:
+        _lock.release()
+
+
 def _run_p0_frontend_async() -> None:
     python = sys.executable
     browser_enabled = _browser_frontend_enabled()
-    frontend_command = _frontend_command(
-        priority="P0",
-        require_competitor_samples=browser_enabled,
-        search_policy="always" if browser_enabled else "ad-driven",
-    )
     refresh_command = [python, "main.py", "--marketplace", "ALL"]
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     try:
-        needed_summary = _frontend_refresh_needed_summary(priority="P0", require_competitor_samples=browser_enabled)
+        needed_summary = {
+            **_frontend_refresh_needed_summary(priority="P0", require_competitor_samples=browser_enabled),
+            **_sellersprite_reverse_needed_summary(priority="P0"),
+        }
         total = int(needed_summary.get("frontend_queue_total") or 0)
         needed = int(needed_summary.get("frontend_refresh_needed_count") or 0)
+        sellersprite_needed = int(needed_summary.get("sellersprite_missing_count") or 0)
+        frontend_command = _frontend_command(
+            priority="P0",
+            require_competitor_samples=browser_enabled,
+            search_policy="always",
+            limit=_frontend_refresh_batch_limit(needed),
+        )
         if total == 0:
             _sync_frontend_async_status(
                 {
@@ -1389,12 +2102,28 @@ def _run_p0_frontend_async() -> None:
                 }
             )
             return
+        if total:
+            try:
+                _start_sellersprite_reverse_async(priority="P0")
+            except Exception as exc:
+                _sync_sellersprite_async_status(
+                    {
+                        "running": False,
+                        "message": f"卖家精灵后台反查启动失败：{exc}",
+                        "returncode": 1,
+                        "status_scope": "sellersprite_async",
+                    }
+                )
         if needed == 0:
             summary = {**needed_summary, **_frontend_queue_status_summary(priority="P0")}
+            message = (
+                f"P0 前台后台检查无需刷新：{total}/{total} 个已有今日前台证据；"
+                + ("卖家精灵反查交给后台运行。" if sellersprite_needed else "未访问 Amazon。")
+            )
             _sync_frontend_async_status(
                 {
                     "running": False,
-                    "message": f"P0 前台后台检查无需刷新：{total}/{total} 个已有今日前台证据；未访问 Amazon。",
+                    "message": message,
                     "returncode": 0,
                     "status_scope": "frontend_async",
                     "failure_mode": "frontend_refresh_not_needed",
@@ -1499,73 +2228,108 @@ def _run_frontend_retry() -> None:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     browser_enabled = _browser_frontend_enabled()
-    frontend_step = (
-        f"当前前台队列{_frontend_method_label()}缺口刷新",
-        _frontend_command(search_policy="ad-driven"),
-        600,
-    )
-    refresh_step = ("刷新 HTML / Excel 报告", [python, "main.py", "--marketplace", "ALL"], 180)
-    steps = [frontend_step, refresh_step]
     try:
-        needed_summary = _frontend_refresh_needed_summary()
+        needed_summary = {
+            **_frontend_refresh_needed_summary(),
+            **_sellersprite_reverse_needed_summary(),
+        }
         total = int(needed_summary.get("frontend_queue_total") or 0)
         needed = int(needed_summary.get("frontend_refresh_needed_count") or 0)
-        if total and needed == 0:
-            message = f"无需刷新：{total}/{total} 个已有今日前台证据；未访问 Amazon。"
-            completed = subprocess.CompletedProcess([python, "scripts/run_frontend_checks.py", "--method", _frontend_refresh_method(), "--only-stale"], 0, "", "")
-            summary = {**needed_summary, **_frontend_queue_status_summary()}
-            _sync_last_result(
-                _completed_payload(
-                    completed,
-                    message,
-                    "当前前台队列刷新失败，已保留现有前台缓存。",
-                    status_scope="frontend_retry",
-                    failure_mode="frontend_refresh_not_needed",
-                    frontend_refresh_total=total,
-                    frontend_refresh_live_checked=0,
-                    frontend_refresh_skipped=total,
-                    frontend_refresh_cache_used=0,
-                    frontend_refresh_failed=0,
-                    **summary,
-                )
-            )
-            return
+        sellersprite_needed = int(needed_summary.get("sellersprite_missing_count") or 0)
+        frontend_step = (
+            f"当前前台队列{_frontend_method_label()}手动刷新",
+            _frontend_command(search_policy="always", limit=_frontend_refresh_batch_limit(total), only_stale=False),
+            600,
+        )
+        sellersprite_step = (
+            "卖家精灵本次反查",
+            _sellersprite_reverse_command(),
+            1200,
+        ) if sellersprite_needed else None
+        refresh_step = ("刷新 HTML / Excel 报告", [python, "main.py", "--marketplace", "ALL"], 180)
+        steps = [frontend_step]
+        if sellersprite_step is not None:
+            steps.append(sellersprite_step)
+        steps.append(refresh_step)
+        frontend_failure: subprocess.CompletedProcess[str] | None = None
         if browser_enabled:
             _set_progress("检查本机 Chrome CDP 会话", 1, len(steps), CHROME_CDP_ENDPOINT)
         if browser_enabled and not _start_chrome_cdp_if_needed(CHROME_CDP_ENDPOINT):
-            combined = subprocess.CompletedProcess(
+            frontend_failure = subprocess.CompletedProcess(
                 [python, "scripts/run_frontend_checks.py", "--method", "chrome-cdp"],
                 1,
                 stdout="\n".join(stdout_parts),
                 stderr="\n".join(stderr_parts + [f"Chrome CDP endpoint is not available: {CHROME_CDP_ENDPOINT}"]),
             )
-            _sync_last_result(
-                _completed_payload(
-                    combined,
-                    "当前前台队列刷新完成，报告已刷新。",
-                    (
-                        "当前前台队列刷新未启动：本机 Chrome CDP 端口不可用。"
-                        "已保留现有前台缓存；未读取成功前不写入实时前台证据。"
-                    ),
-                    status_scope="frontend_retry",
-                    failure_mode="chrome_cdp_unavailable",
-                    **needed_summary,
-                )
-            )
-            return
-        frontend_failure: subprocess.CompletedProcess[str] | None = None
+            stdout_parts.append(frontend_failure.stdout)
+            stderr_parts.append(frontend_failure.stderr)
+            steps = [step for step in steps if step[0] != frontend_step[0]]
+        sellersprite_failure: subprocess.CompletedProcess[str] | None = None
         for index, (label, command, timeout) in enumerate(steps, start=1):
             _set_progress(label, index, len(steps), " ".join(command))
-            completed = (
-                _run_frontend_command_with_progress(command, timeout, step=index, total_steps=len(steps))
-                if label == frontend_step[0]
-                else _run_command(command, timeout=timeout)
-            )
+            if label == frontend_step[0]:
+                completed = _run_frontend_command_with_progress(command, timeout, step=index, total_steps=len(steps))
+            elif sellersprite_step is not None and label == sellersprite_step[0]:
+                seller_started_at = time.time()
+                seller_status_owned = False
+                if not _sellersprite_async_lock.acquire(blocking=False):
+                    _sync_sellersprite_async_status(
+                        {
+                            **_sellersprite_async_status,
+                            "running": True,
+                            "message": "卖家精灵已有任务在运行，本次调查等待现有任务结果。",
+                            "status_scope": "sellersprite_async",
+                        }
+                    )
+                    completed = subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                else:
+                    seller_status_owned = True
+                    try:
+                        _sync_sellersprite_async_status(
+                            {
+                                "running": True,
+                                "message": f"卖家精灵本次反查已启动：需抓 {sellersprite_needed} 个 ASIN",
+                                "detail": " ".join(command),
+                                "started_at_epoch": seller_started_at,
+                                "elapsed_seconds": 0,
+                                "status_scope": "sellersprite_async",
+                                **needed_summary,
+                            }
+                        )
+                        completed = _run_sellersprite_command_with_progress(command, timeout=timeout, label="本次调查")
+                    finally:
+                        _sellersprite_async_lock.release()
+                if seller_status_owned:
+                    try:
+                        seller_summary = _sellersprite_reverse_needed_summary()
+                    except Exception:
+                        seller_summary = {}
+                    _sync_sellersprite_async_status(
+                        {
+                            "running": False,
+                            "message": (
+                                "卖家精灵本次反查完成。"
+                                if completed.returncode == 0
+                                else "卖家精灵本次反查失败，已保留缓存。"
+                            ),
+                            "returncode": completed.returncode,
+                            "elapsed_seconds": max(0, int(time.time() - seller_started_at)),
+                            "stdout_tail": completed.stdout[-2000:],
+                            "stderr_tail": completed.stderr[-2000:],
+                            "status_scope": "sellersprite_async",
+                            **seller_summary,
+                        }
+                    )
+            else:
+                completed = _run_command(command, timeout=timeout)
             stdout_parts.append(completed.stdout)
             stderr_parts.append(completed.stderr)
             if completed.returncode != 0:
                 if label == frontend_step[0]:
                     frontend_failure = completed
+                    continue
+                if sellersprite_step is not None and label == sellersprite_step[0]:
+                    sellersprite_failure = completed
                     continue
                 combined = subprocess.CompletedProcess(
                     completed.args,
@@ -1593,18 +2357,28 @@ def _run_frontend_retry() -> None:
             frontend_summary = _frontend_queue_status_summary()
             frontend_summary.update(_frontend_refresh_result_summary())
             status_message = _frontend_retry_status_message(frontend_summary)
+            frontend_unavailable = "Chrome CDP endpoint is not available" in str(frontend_failure.stderr or "")
             _sync_last_result(
                 _completed_payload(
                     combined,
                     "当前前台队列刷新完成，报告已刷新。",
-                    status_message or "当前前台队列刷新未全部读取成功，已刷新报告并保留失败产品为待前台检查。",
+                    status_message
+                    or (
+                        "当前前台队列刷新未启动：本机 Chrome CDP 端口不可用。已刷新报告，卖家精灵按本次调查继续处理。"
+                        if frontend_unavailable
+                        else "当前前台队列刷新未全部读取成功，已刷新报告并保留失败产品为待前台检查。"
+                    ),
                     status_scope="frontend_retry",
                     failure_mode=(
-                        "chrome_cdp_frontend_check_passed_with_pending"
-                        if frontend_summary.get("frontend_queue_passed") and int(frontend_summary.get("frontend_pending_count") or 0)
-                        else ("chrome_cdp_frontend_check_partial" if status_message else "chrome_cdp_frontend_check_failed")
+                        "chrome_cdp_unavailable"
+                        if frontend_unavailable
+                        else (
+                            "chrome_cdp_frontend_check_passed_with_pending"
+                            if frontend_summary.get("frontend_queue_passed") and int(frontend_summary.get("frontend_pending_count") or 0)
+                            else ("chrome_cdp_frontend_check_partial" if status_message else "chrome_cdp_frontend_check_failed")
+                        )
                     ),
-                    soft_failure=bool(status_message),
+                    soft_failure=bool(status_message) or frontend_unavailable,
                     **frontend_summary,
                 )
             )
@@ -1618,6 +2392,8 @@ def _run_frontend_retry() -> None:
         frontend_summary = _frontend_queue_status_summary()
         frontend_summary.update(_frontend_refresh_result_summary())
         status_message = _frontend_retry_status_message(frontend_summary)
+        if sellersprite_failure is not None:
+            status_message = (status_message + " " if status_message else "") + "卖家精灵反查失败，已保留缓存。"
         _sync_last_result(
             _completed_payload(
                 combined,
@@ -1629,16 +2405,37 @@ def _run_frontend_retry() -> None:
                     if frontend_summary.get("frontend_queue_passed") and int(frontend_summary.get("frontend_pending_count") or 0)
                     else ("chrome_cdp_frontend_check_passed" if frontend_summary.get("frontend_queue_passed") else "chrome_cdp_frontend_check_partial")
                 ),
+                soft_failure=bool(sellersprite_failure),
                 **frontend_summary,
             )
         )
     except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        refresh = _run_command([python, "main.py", "--marketplace", "ALL"], timeout=180)
+        frontend_summary = _frontend_queue_status_summary()
+        frontend_summary.update(_frontend_refresh_result_summary())
+        status_message = _frontend_retry_status_message(frontend_summary)
+        combined = subprocess.CompletedProcess(
+            getattr(exc, "cmd", [python, "scripts/run_frontend_checks.py"]),
+            0 if refresh.returncode == 0 else refresh.returncode,
+            stdout=str(stdout) + "\n" + refresh.stdout,
+            stderr=str(stderr) + "\n" + refresh.stderr,
+        )
         _sync_last_result(
-            _timeout_payload(
-                "真实 Chrome 前台刷新超时，已保留旧前台缓存。",
-                exc,
+            _completed_payload(
+                combined,
+                status_message or "本轮前台刷新超时，已停止本轮；报告已刷新，下一次继续刷剩余队列。",
+                "本轮前台刷新超时，报告刷新失败；旧前台缓存仍保留。",
                 status_scope="frontend_retry",
-                failure_mode="chrome_cdp_frontend_check_timeout",
+                failure_mode="chrome_cdp_frontend_check_timeout_partial",
+                soft_failure=True,
+                original_returncode=124,
+                **frontend_summary,
             )
         )
     finally:
@@ -1667,6 +2464,17 @@ def _run_frontend_check_one(params: dict[str, str]) -> None:
         params["asin"],
     ]
     try:
+        try:
+            _start_sellersprite_reverse_async(params=params)
+        except Exception as exc:
+            _sync_sellersprite_async_status(
+                {
+                    "running": False,
+                    "message": f"卖家精灵后台反查启动失败：{exc}",
+                    "returncode": 1,
+                    "status_scope": "sellersprite_async",
+                }
+            )
         _set_progress("单产品前台检查", 1, 2, " ".join(command))
         check = _run_command(command, timeout=150)
         if check.returncode == 0:
@@ -1710,6 +2518,17 @@ def _run_battle_diagnosis_one(params: dict[str, str]) -> None:
         params["asin"],
     ]
     try:
+        try:
+            _start_sellersprite_reverse_async(params=params)
+        except Exception as exc:
+            _sync_sellersprite_async_status(
+                {
+                    "running": False,
+                    "message": f"卖家精灵后台反查启动失败：{exc}",
+                    "returncode": 1,
+                    "status_scope": "sellersprite_async",
+                }
+            )
         _set_progress("单产品作战前台检查", 1, 2, " ".join(command))
         check = _run_command(command, timeout=120)
         refresh_command = [python, "main.py", "--marketplace", "ALL"]
@@ -1856,6 +2675,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/copy/text":
             self._handle_copy_text()
             return
+        if path == "/run/report-refresh":
+            self._start_report_refresh()
+            return
         if path == "/run/daily-update":
             self._start_daily_update()
             return
@@ -1948,16 +2770,20 @@ class Handler(BaseHTTPRequestHandler):
             if len(text) > 200_000:
                 self._send_json(400, {"ok": False, "message": "复制内容过长。"})
                 return
-            completed = subprocess.run(
-                ["pbcopy"],
-                cwd=ROOT,
-                input=text,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=3,
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    ["pbcopy"],
+                    cwd=ROOT,
+                    input=text,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=3,
+                    check=False,
+                )
+            except OSError as exc:
+                self._send_json(500, {"ok": False, "message": f"本机复制命令不可用：{exc}"})
+                return
             if completed.returncode != 0:
                 self._send_json(
                     500,
@@ -2202,6 +3028,27 @@ class Handler(BaseHTTPRequestHandler):
         thread.start()
         self._send_json(202, {"ok": True, "running": True, "message": "已开始导入 inbox 并刷新报告。"})
 
+    def _start_report_refresh(self) -> None:
+        if not _lock.acquire(blocking=False):
+            self._send_json(409, {"ok": False, "running": True, "message": "已有上传或刷新正在运行，请稍等。"})
+            return
+        global _last_result
+        _last_result = {
+            **_load_submission_status(),
+            "running": True,
+            "message": "轻量报告刷新已启动",
+            "step": 0,
+            "total_steps": 1,
+            "started_at_epoch": time.time(),
+            "elapsed_seconds": 0,
+            "returncode": None,
+            "status_scope": "report_refresh",
+        }
+        _write_submission_status(_last_result)
+        thread = threading.Thread(target=_run_report_refresh, daemon=True)
+        thread.start()
+        self._send_json(202, {"ok": True, "running": True, "message": "已开始刷新报告；不会导入 inbox 或访问 Amazon 前台。"})
+
     def _start_frontend_retry(self) -> None:
         if not _lock.acquire(blocking=False):
             self._send_json(409, {"ok": False, "running": True, "message": "前台数据重试正在运行，请稍等。"})
@@ -2209,16 +3056,16 @@ class Handler(BaseHTTPRequestHandler):
         global _last_result
         _last_result = {
             "running": True,
-            "message": "当前前台队列缺口刷新已启动",
+            "message": "市场调查已启动",
             "step": 0,
-            "total_steps": 2,
+            "total_steps": 3,
             "started_at_epoch": time.time(),
             "elapsed_seconds": 0,
             "status_scope": "frontend_retry",
         }
         thread = threading.Thread(target=_run_frontend_retry, daemon=True)
         thread.start()
-        self._send_json(202, {"ok": True, "running": True, "message": "已开始当前前台队列缺口刷新；已有今日证据会跳过，失败会保留缓存。"})
+        self._send_json(202, {"ok": True, "running": True, "message": "已开始市场调查；会一次执行商品页、卖家精灵和报告刷新。"})
 
     def _start_frontend_check_one(self, params: dict[str, str]) -> None:
         required = {
@@ -2274,6 +3121,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    _clear_stale_running_status_on_startup()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"[report-action-server] listening on http://{HOST}:{PORT}", flush=True)
     print("[report-action-server] keep this window open while using page buttons", flush=True)

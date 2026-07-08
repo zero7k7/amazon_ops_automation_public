@@ -279,6 +279,7 @@ REPORT_JS += r"""
     '/upload/config': true,
     '/apply/config': true,
     '/copy/text': true,
+    '/run/report-refresh': true,
     '/run/daily-update': true,
     '/run/frontend-retry': true,
     '/run/frontend-check-one': true,
@@ -491,7 +492,1023 @@ REPORT_JS += r"""
 }());
 """
 
+REPORT_JS += r"""
+
+(function () {
+  function compactStatusText(text) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .replace(/；{2,}/g, '；')
+      .replace(/^；|；$/g, '')
+      .trim();
+  }
+
+  function localStatusFragment(htmlText) {
+    var template = document.createElement('template');
+    template.innerHTML = String(htmlText || '');
+    return template;
+  }
+
+  function directManagedChild(box, selector, attrName) {
+    var child = Array.prototype.slice.call(box.children).find(function (item) {
+      return item.matches(selector);
+    });
+    if (child) return child;
+    child = document.createElement('div');
+    child.setAttribute(attrName, 'true');
+    box.appendChild(child);
+    return child;
+  }
+
+  function cleanupLocalStatusChildren(box) {
+    Array.prototype.slice.call(box.childNodes).forEach(function (child) {
+      if (child.nodeType === 3) {
+        if (String(child.textContent || '').trim()) child.remove();
+        return;
+      }
+      if (child.nodeType !== 1) return;
+      if (child.matches('[data-local-status-primary], [data-local-status-links], [data-workflow-progress-status]')) return;
+      child.remove();
+    });
+  }
+
+  function updateSlotHtml(slot, htmlText) {
+    var next = String(htmlText || '');
+    if (!next) {
+      if (slot.innerHTML) slot.innerHTML = '';
+      slot.hidden = true;
+      return;
+    }
+    slot.hidden = false;
+    if (slot.innerHTML !== next) slot.innerHTML = next;
+  }
+
+  function applyStableLocalStatus(box, htmlText) {
+    var template = localStatusFragment(htmlText);
+    var links = template.content.querySelector('.local-submit-links');
+    Array.prototype.slice.call(template.content.querySelectorAll('.local-submit-links, .frontend-async-status, [data-workflow-progress-status]')).forEach(function (node) {
+      node.remove();
+    });
+    var message = compactStatusText(template.content.textContent || htmlText);
+    cleanupLocalStatusChildren(box);
+    var primary = directManagedChild(box, '[data-local-status-primary]', 'data-local-status-primary');
+    if (box.firstChild !== primary) box.insertBefore(primary, box.firstChild);
+    if (primary.textContent !== message) primary.textContent = message;
+    var linksSlot = directManagedChild(box, '[data-local-status-links]', 'data-local-status-links');
+    if (linksSlot.previousSibling !== primary) box.insertBefore(linksSlot, primary.nextSibling);
+    updateSlotHtml(linksSlot, links ? links.outerHTML : '');
+  }
+
+  function installLocalSubmitStatusStabilizer() {
+    var box = document.querySelector('[data-local-submit-status]');
+    if (!box || box.__localSubmitStatusStabilized) return;
+    var descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML') || Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerHTML');
+    if (!descriptor || !descriptor.get || !descriptor.set) return;
+    box.__localSubmitStatusStabilized = true;
+    Object.defineProperty(box, 'innerHTML', {
+      configurable: true,
+      get: function () {
+        return descriptor.get.call(this);
+      },
+      set: function (value) {
+        applyStableLocalStatus(this, value);
+      }
+    });
+    applyStableLocalStatus(box, descriptor.get.call(box));
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installLocalSubmitStatusStabilizer);
+  } else {
+    installLocalSubmitStatusStabilizer();
+  }
+}());
+
+(function () {
+  function escapeHtml(text) {
+    return String(text || '').replace(/[&<>"']/g, function (char) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char] || char;
+    });
+  }
+
+  function progressParts(status) {
+    var parts = [];
+    var step = Number(status.step || 0);
+    var total = Number(status.total_steps || 0);
+    if (step && total) parts.push(step + '/' + total);
+    if (status.elapsed_seconds !== undefined && status.elapsed_seconds !== null) {
+      var elapsed = Number(status.elapsed_seconds || 0);
+      parts.push(elapsed >= 60 ? ('约 ' + Math.floor(elapsed / 60) + ' 分钟') : (elapsed + ' 秒'));
+    }
+    if (status.sellersprite_processed_count !== undefined) {
+      parts.push('已处理 ' + status.sellersprite_processed_count);
+    } else if (status.sellersprite_missing_count !== undefined) {
+      parts.push('需抓 ' + status.sellersprite_missing_count);
+    }
+    if (status.sellersprite_success_count !== undefined || status.sellersprite_failed_count !== undefined) {
+      parts.push('成功 ' + Number(status.sellersprite_success_count || 0) + '，失败 ' + Number(status.sellersprite_failed_count || 0));
+    }
+    if (status.captured_count !== undefined) parts.push('抓词 ' + status.captured_count);
+    return parts.slice(0, 3);
+  }
+
+  function compactWorkflowMessage(message, attr, status) {
+    var text = String(message || '').replace(/\s+/g, ' ').trim();
+    var missing = Number(status.sellersprite_missing_count || 0);
+    var processed = Number(status.sellersprite_processed_count || 0);
+    var success = Number(status.sellersprite_success_count || 0);
+    var failed = Number(status.sellersprite_failed_count || 0);
+    if (String(attr || '').indexOf('sellersprite') !== -1) {
+      if (status.running) {
+        if (processed || success || failed) return '正在反查：已处理 ' + processed + '，成功 ' + success + '，失败 ' + failed + '。';
+        if (missing) return '正在反查：本次需抓 ' + missing + ' 个 ASIN。';
+        return '正在反查卖家精灵。';
+      }
+      if (missing) return '本次需抓 ' + missing + ' 个 ASIN。';
+      if (text.indexOf('无需运行') !== -1) return '无需补抓，已有缓存。';
+      if (text.indexOf('失败') !== -1) return '反查失败，已保留缓存。';
+      if (text.indexOf('完成') !== -1) return '反查完成。';
+    }
+    if (text.indexOf('当前前台队列刷新') !== -1) {
+      text = text.replace('当前前台队列刷新通过', '调查完成').replace('当前前台队列刷新未达标', '调查待补');
+      var evidence = text.match(/(?:今日证据|本轮队列)\s*([0-9]+\/[0-9]+)/);
+      var refreshed = text.match(/新读\s*([0-9]+)/);
+      var error = text.match(/失败\s*([0-9]+)/);
+      if (evidence) {
+        return text.split('：')[0] + '：本轮队列 ' + evidence[1]
+          + (refreshed ? '，新读 ' + refreshed[1] : '')
+          + (error ? '，失败 ' + error[1] : '')
+          + '。';
+      }
+    }
+    return text;
+  }
+
+  function mainWorkflowButtonLabel(payload) {
+    if (!payload || !payload.running) return '';
+    var parts = ['运行中'];
+    var step = Number(payload.step || 0);
+    var total = Number(payload.total_steps || 0);
+    if (step && total) parts.push(step + '/' + total);
+    if (payload.elapsed_seconds !== undefined && payload.elapsed_seconds !== null) {
+      var elapsed = Number(payload.elapsed_seconds || 0);
+      parts.push(elapsed >= 60 ? (Math.floor(elapsed / 60) + '分') : (elapsed + '秒'));
+    }
+    return parts.join(' ');
+  }
+
+  function updateMainWorkflowButtons(payload) {
+    var label = mainWorkflowButtonLabel(payload);
+    if (!label) return;
+    Array.prototype.slice.call(document.querySelectorAll('[data-local-submit-form] button[type="submit"]:disabled')).forEach(function (button) {
+      if (button.textContent !== label) button.textContent = label;
+    });
+  }
+
+  function asyncStatusHtml(payload, key, attr, runningPrefix, idlePrefix) {
+    if (!payload || !payload[key]) return '';
+    var status = payload[key] || {};
+    var message = String(status.message || '').trim();
+    if (!message) return '';
+    var statusClass = status.running ? ' status-running' : (status.returncode && status.returncode !== 0 ? ' status-error' : (status.soft_failure ? ' status-soft' : ' status-ok'));
+    var prefix = status.running ? runningPrefix : idlePrefix;
+    var detail = (status.running ? progressParts(status) : []).map(function (part) {
+      return '<span>' + escapeHtml(part) + '</span>';
+    }).join('');
+    return '<div class="local-submit-status workflow-async-status' + statusClass + '" data-workflow-progress-status="' + attr + '">'
+      + '<div class="workflow-status-head"><strong>' + escapeHtml(prefix) + '</strong></div>'
+      + '<div class="workflow-status-message">' + escapeHtml(message) + '</div>'
+      + (detail ? '<div class="workflow-progress-line">' + detail + '</div>' : '')
+      + '</div>';
+  }
+
+  function asyncStatusModel(payload, key, attr, runningPrefix, idlePrefix) {
+    if (!payload || !payload[key]) return null;
+    var status = payload[key] || {};
+    var message = String(status.message || '').trim();
+    if (!message) return null;
+    return {
+      attr: attr,
+      className: 'local-submit-status workflow-async-status' + (
+        status.running ? ' status-running' : (status.returncode && status.returncode !== 0 ? ' status-error' : (status.soft_failure ? ' status-soft' : ' status-ok'))
+      ),
+      prefix: status.running ? runningPrefix : idlePrefix,
+      message: compactWorkflowMessage(message, attr, status),
+      parts: status.running ? progressParts(status) : []
+    };
+  }
+
+  function upsertWorkflowStatus(container, model) {
+    if (!container || !model) return;
+    var selector = '[data-workflow-progress-status="' + model.attr + '"]';
+    var node = container.querySelector(selector);
+    if (!node) {
+      node = document.createElement('div');
+      node.setAttribute('data-workflow-progress-status', model.attr);
+      node.innerHTML = '<div class="workflow-status-head"><strong></strong></div><div class="workflow-status-message"></div>';
+      container.appendChild(node);
+    }
+    if (node.className !== model.className) node.className = model.className;
+    var heading = node.querySelector('.workflow-status-head strong');
+    if (heading && heading.textContent !== model.prefix) heading.textContent = model.prefix;
+    var message = node.querySelector('.workflow-status-message');
+    if (message && message.textContent !== model.message) message.textContent = model.message;
+    var detailText = model.parts.join('|');
+    var detail = node.querySelector('.workflow-progress-line');
+    if (model.parts.length) {
+      if (!detail) {
+        detail = document.createElement('div');
+        detail.className = 'workflow-progress-line';
+        node.appendChild(detail);
+      }
+      if (detail.getAttribute('data-progress-text') !== detailText) {
+        detail.setAttribute('data-progress-text', detailText);
+        detail.innerHTML = model.parts.map(function (part) {
+          return '<span>' + escapeHtml(part) + '</span>';
+        }).join('');
+      }
+    } else if (detail) {
+      detail.remove();
+    }
+  }
+
+  function removeWorkflowStatus(container, attr) {
+    if (!container) return;
+    Array.prototype.slice.call(container.querySelectorAll('[data-workflow-progress-status="' + attr + '"]')).forEach(function (old) {
+      old.remove();
+    });
+  }
+
+  function updateWorkflowProgressStatus() {
+    var statusBox = document.querySelector('[data-local-submit-status]');
+    if (!window.fetch) return;
+    fetch('http://127.0.0.1:8765/submission/status?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (payload) {
+        updateMainWorkflowButtons(payload);
+        var frontendModel = asyncStatusModel(payload, 'frontend_async_status', 'frontend-local', '市场调查运行中', '市场调查');
+        var sellerLocalModel = asyncStatusModel(payload, 'sellersprite_async_status', 'sellersprite-local', '卖家精灵运行中', '卖家精灵');
+        if (statusBox) {
+          frontendModel ? upsertWorkflowStatus(statusBox, frontendModel) : removeWorkflowStatus(statusBox, 'frontend-local');
+          sellerLocalModel ? upsertWorkflowStatus(statusBox, sellerLocalModel) : removeWorkflowStatus(statusBox, 'sellersprite-local');
+        }
+        var sellerInlineModel = asyncStatusModel(payload, 'sellersprite_async_status', 'sellersprite-inline', '卖家精灵运行中', '卖家精灵');
+        Array.prototype.slice.call(document.querySelectorAll('[data-run-report-status="frontend-retry"]')).forEach(function (target) {
+          var container = target.closest('.summary-action') || target.parentElement;
+          if (!container) return;
+          var sellerSlot = container.querySelector('.frontend-sellersprite-slot') || container;
+          sellerInlineModel ? upsertWorkflowStatus(sellerSlot, sellerInlineModel) : removeWorkflowStatus(sellerSlot, 'sellersprite-inline');
+        });
+      })
+      .catch(function () {});
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    updateWorkflowProgressStatus();
+    window.setInterval(updateWorkflowProgressStatus, 2000);
+  });
+}());
+"""
+
 REPORT_UI_CSS += r"""
+.page {
+  gap: 12px;
+}
+.report-card.hero {
+  padding: 22px 24px;
+  border-radius: 8px;
+}
+.report-card.hero h1 {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.15;
+}
+.section-card {
+  padding: 14px 16px;
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.section-card,
+.report-card,
+.work-card,
+.ad-task-card,
+.operation-card,
+.daily-submit-card {
+  max-width: 100%;
+}
+.section-card > *,
+.report-card > *,
+.work-card > *,
+.ad-task-card > *,
+.operation-card > *,
+.daily-submit-card > * {
+  min-width: 0;
+}
+.section-card + .section-card {
+  margin-top: 12px;
+}
+.section-card h2 {
+  font-size: 19px;
+  line-height: 1.25;
+}
+.section-card h3,
+.ad-section h3,
+.card-title {
+  font-size: 16px;
+  line-height: 1.3;
+}
+.ad-section-header {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.section-card > .subtle,
+.operation-section-note,
+.local-submit-lead,
+.ad-boundary-note,
+.ad-filter-scope {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.priority-grid,
+.status-grid,
+.ad-summary-grid {
+  gap: 8px;
+}
+.metric-card,
+.ad-summary-card {
+  min-height: 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+.metric-card strong,
+.ad-summary-card strong {
+  margin-top: 3px;
+  font-size: 22px;
+  line-height: 1;
+}
+.metric-card .value {
+  font-size: 11px;
+  line-height: 1.25;
+}
+.frontend-coverage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+.frontend-coverage-chip {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.frontend-coverage-chip strong {
+  color: #0f172a;
+  font-size: inherit;
+  font-weight: 700;
+  line-height: 1;
+}
+.frontend-coverage-chip .coverage-label {
+  font-weight: 700;
+}
+.frontend-coverage-chip .coverage-note {
+  color: #64748b;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.frontend-coverage-chip.pass {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+.frontend-coverage-chip.warn {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+.frontend-coverage-chip.info {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.frontend-coverage-chip.muted {
+  background: #f8fafc;
+}
+.status-danger {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+.status-warn {
+  border-color: #fed7aa;
+  background: #fffdf8;
+}
+.status-pass {
+  border-color: #bbf7d0;
+  background: #fbfffd;
+}
+.button-link,
+.collapsible-toggle,
+.copy-button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.collapsible-toggle,
+.copy-button {
+  border-radius: 999px;
+}
+.local-submit-panel {
+  display: block;
+  padding: 12px 14px;
+  border-color: #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.local-submit-panel:not(.is-collapsed) {
+  display: block;
+}
+.local-submit-panel .ad-section-header {
+  align-items: center;
+  margin-bottom: 6px;
+}
+.local-submit-panel h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.local-submit-kicker {
+  margin-bottom: 1px;
+  color: #64748b;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.local-submit-lead {
+  max-width: none;
+  margin: 0 0 8px;
+  color: #475569;
+  font-size: 13px;
+}
+.daily-submit-card {
+  padding: 10px;
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+.local-submit-panel .ad-section {
+  margin-top: 8px;
+  padding: 10px;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.local-submit-status-panel {
+  position: static;
+  display: grid;
+  gap: 6px;
+}
+.local-submit-panel:not(.is-collapsed) .local-submit-status-panel {
+  margin-top: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.local-submit-status {
+  min-height: 0;
+  padding: 8px 10px;
+  border-color: #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.38;
+}
+.local-submit-status + .local-submit-status {
+  margin-top: 0;
+}
+.local-submit-panel.is-collapsed [data-config-submit-status] {
+  display: none;
+}
+.local-submit-panel.is-collapsed .local-submit-links,
+.local-submit-panel.is-collapsed [data-workflow-progress-status].status-ok {
+  display: none;
+}
+.local-submit-panel.is-collapsed .local-submit-status {
+  max-height: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.local-submit-panel.is-collapsed [data-local-submit-status] {
+  max-height: 40px;
+}
+.local-submit-panel.is-collapsed [data-local-status-links],
+.local-submit-panel.is-collapsed [data-workflow-progress-status] {
+  white-space: normal;
+}
+.ad-section {
+  padding: 12px;
+  border-radius: 8px;
+}
+.ad-section.primary-action {
+  background: #f8fbff;
+  border-color: #bfdbfe;
+}
+.ad-copy-box {
+  padding: 10px;
+  border-radius: 7px;
+}
+.ad-task-card,
+.work-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.work-card.p0 {
+  border-color: #ef4444;
+  border-left-width: 4px;
+}
+.work-card.p1 {
+  border-color: #f59e0b;
+  border-left-width: 4px;
+}
+.card-head {
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.card-meta,
+.subtle {
+  font-size: 12px;
+}
+.card-block {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+.card-block strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+.card-block p,
+.card-block ul {
+  margin: 3px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.metric-row {
+  gap: 5px;
+}
+.metric-badge,
+.tag,
+.status-badge {
+  min-height: 22px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.table-wrap {
+  border-radius: 8px;
+}
+.operation-table th,
+.operation-table td {
+  padding: 9px 10px;
+  font-size: 13px;
+  vertical-align: top;
+}
+.operation-wide-list {
+  display: grid;
+  gap: 8px;
+}
+.operation-wide-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.operation-wide-head {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.15fr) minmax(74px, 0.22fr) minmax(260px, 0.8fr) minmax(320px, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+}
+.operation-wide-product strong {
+  display: block;
+  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.operation-wide-verdict {
+  display: flex;
+  align-items: flex-start;
+}
+.operation-wide-metrics .operation-metric-list,
+.operation-wide-actions .operation-action-line {
+  margin-top: 0;
+}
+.operation-wide-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 12px;
+  padding: 0 14px 12px;
+}
+.operation-wide-market,
+.operation-wide-reason {
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
+}
+.operation-wide-market .operation-seller-summary {
+  margin-top: 0;
+}
+.operation-wide-reason .operation-main-reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.operation-main-reason {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.operation-profile {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 7px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.operation-profile strong {
+  color: #0f172a;
+}
+.operation-profile span {
+  color: #64748b;
+}
+.operation-profile.strong {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.operation-profile.strong strong {
+  color: #1d4ed8;
+}
+.operation-profile.boundary {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+.operation-profile.boundary strong {
+  color: #9a3412;
+}
+.operation-profile.insufficient {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.operation-seller-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+.seller-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 3px 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.seller-chip.main {
+  border-color: #bfdbfe;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.seller-chip.warn {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+.seller-chip.muted {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+}
+.operation-action-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.boundary-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 4px 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.boundary-chip.allow {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+.boundary-chip.block {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+.boundary-chip.review {
+  flex-basis: 100%;
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font-weight: 700;
+}
+.operation-more summary,
+.frontend-card-more summary {
+  cursor: pointer;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+.frontend-refresh-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
+  padding: 8px;
+  background: #f8fafc;
+}
+.frontend-status-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+  flex: initial;
+}
+.frontend-status-card,
+.frontend-refresh-panel .workflow-async-status {
+  flex: initial;
+  padding: 7px 8px;
+}
+.frontend-card-more {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #e2e8f0;
+}
+.frontend-card-more[open] {
+  padding-bottom: 2px;
+}
+#frontend-evidence-status .priority-grid {
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+}
+#frontend-evidence-status .action-grid {
+  gap: 10px;
+}
+#frontend-evidence-status .frontend-check-card {
+  min-height: 0;
+}
+.back-to-top {
+  width: 42px;
+  height: 42px;
+}
+@media (max-width: 720px) {
+  .page {
+    padding: 10px;
+    gap: 10px;
+  }
+  .report-card.hero,
+  .section-card {
+    padding: 12px;
+  }
+  .section-card h2 {
+    font-size: 18px;
+  }
+  .priority-grid,
+  .status-grid,
+  .ad-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .metric-card,
+  .ad-summary-card {
+    padding: 8px;
+  }
+  .metric-card strong,
+  .ad-summary-card strong {
+    font-size: 20px;
+  }
+  .frontend-coverage-strip {
+    margin-top: 6px;
+  }
+  .frontend-coverage-chip {
+    flex: 1 1 46%;
+    border-radius: 7px;
+  }
+  .frontend-coverage-chip .coverage-note {
+    white-space: normal;
+  }
+  .frontend-refresh-panel {
+    grid-template-columns: 1fr;
+  }
+  .frontend-refresh-control .button-link {
+    width: 100%;
+  }
+  .frontend-status-stack {
+    grid-template-columns: 1fr;
+  }
+  .work-card,
+  .ad-task-card {
+    padding: 11px;
+  }
+  .card-head {
+    align-items: flex-start;
+  }
+}
+@media (max-width: 520px) {
+  .priority-grid,
+  .status-grid,
+  .ad-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .button-link {
+    width: auto;
+  }
+  .frontend-coverage-chip {
+    flex-basis: 100%;
+  }
+}
+
+.workflow-async-status {
+  display: block;
+}
+.frontend-refresh-panel {
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.frontend-refresh-control {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.frontend-status-stack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.frontend-status-card,
+.frontend-refresh-panel .workflow-async-status {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #d9e2f1;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f3658;
+  box-shadow: none;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.frontend-status-label,
+.workflow-status-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #1d4ed8;
+  letter-spacing: 0;
+}
+.frontend-status-label::before,
+.workflow-status-head strong::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #3b82f6;
+}
+.frontend-status-card .subtle,
+.workflow-status-message {
+  display: block;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.workflow-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.workflow-progress-line span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.10);
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 700;
+}
+.workflow-async-status.status-ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+.workflow-async-status.status-ok .workflow-status-head strong,
+.workflow-async-status.status-ok .workflow-status-message {
+  color: #166534;
+}
+.workflow-async-status.status-ok .workflow-status-head strong::before {
+  background: #22c55e;
+}
+.workflow-async-status.status-soft {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+.workflow-async-status.status-soft .workflow-status-head strong,
+.workflow-async-status.status-soft .workflow-status-message {
+  color: #9a3412;
+}
+.workflow-async-status.status-soft .workflow-status-head strong::before {
+  background: #f97316;
+}
+.workflow-async-status.status-running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.workflow-async-status.status-error {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+.workflow-async-status.status-error .workflow-status-head strong,
+.workflow-async-status.status-error .workflow-status-message {
+  color: #991b1b;
+}
+.workflow-async-status.status-error .workflow-status-head strong::before {
+  background: #ef4444;
+}
+@media (max-width: 720px) {
+  .frontend-refresh-panel {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .frontend-refresh-control {
+    width: auto;
+  }
+  .frontend-refresh-control .button-link {
+    width: auto;
+    justify-content: center;
+  }
+  .frontend-status-stack {
+    flex: 1 1 auto;
+  }
+  .frontend-status-card,
+  .frontend-refresh-panel .workflow-async-status {
+    flex-basis: 100%;
+  }
+}
 .ad-filter-summary {
   display: none;
   align-items: center;
@@ -508,6 +1525,165 @@ REPORT_UI_CSS += r"""
 }
 .ad-filter-hidden {
   display: none !important;
+}
+"""
+
+REPORT_UI_CSS += r"""
+.frontend-refresh-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
+}
+.frontend-status-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+  flex: initial;
+}
+.frontend-status-card,
+.frontend-refresh-panel .workflow-async-status {
+  flex: initial;
+}
+@media (max-width: 720px) {
+  .frontend-refresh-panel {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .frontend-refresh-control {
+    width: 100%;
+  }
+  .frontend-refresh-control .button-link {
+    width: 100%;
+  }
+  .frontend-status-stack {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .frontend-status-card,
+  .frontend-refresh-panel .workflow-async-status {
+    flex-basis: auto;
+  }
+}
+@media (min-width: 721px) {
+  #frontend-evidence-status .action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #product-operation-cards .table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+}
+@media (max-width: 1180px) {
+  .operation-wide-head {
+    grid-template-columns: minmax(260px, 1fr) minmax(76px, auto);
+  }
+  .operation-wide-metrics,
+  .operation-wide-actions {
+    grid-column: 1 / -1;
+  }
+  .operation-wide-body {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .operation-wide-card {
+    border-radius: 8px;
+  }
+  .operation-wide-head,
+  .operation-wide-body {
+    display: block;
+    padding: 10px;
+  }
+  .operation-wide-verdict,
+  .operation-wide-metrics,
+  .operation-wide-actions,
+  .operation-wide-market,
+  .operation-wide-reason {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #edf2f7;
+  }
+  .operation-wide-verdict {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .operation-wide-reason .operation-main-reason {
+    display: block;
+    overflow: visible;
+  }
+  #product-operation-cards .table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+  #product-operation-cards .operation-table,
+  #product-operation-cards .operation-table tbody,
+  #product-operation-cards .operation-table tr,
+  #product-operation-cards .operation-table td {
+    display: block;
+    width: 100%;
+  }
+  #product-operation-cards .operation-table thead {
+    display: none;
+  }
+  #product-operation-cards .operation-table tr {
+    margin: 0 0 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+    overflow: hidden;
+  }
+  #product-operation-cards .operation-table td {
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 0;
+    border-top: 1px solid #edf2f7;
+  }
+  #product-operation-cards .operation-table td:first-child {
+    border-top: 0;
+  }
+  #product-operation-cards .product-cell strong {
+    display: block;
+    font-size: 15px;
+    line-height: 1.3;
+  }
+  #product-operation-cards .operation-table td:not(.product-cell)::before {
+    display: block;
+    margin-bottom: 5px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  #product-operation-cards .operation-table td:nth-child(2)::before {
+    content: "结论";
+  }
+  #product-operation-cards .operation-table td.metric-cell::before {
+    content: "关键数";
+  }
+  #product-operation-cards .operation-table td.action-cell::before {
+    content: "动作边界";
+  }
+  #product-operation-cards .operation-table td.reason-cell::before {
+    content: "依据";
+  }
+  #product-operation-cards .operation-metric-list,
+  #product-operation-cards .operation-action-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-width: 0;
+  }
+  #product-operation-cards .operation-metric-chip,
+  #product-operation-cards .operation-action-line span {
+    max-width: 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  #product-operation-cards .operation-action-line .review {
+    flex-basis: 100%;
+  }
 }
 """
 
@@ -644,6 +1820,74 @@ REPORT_JS += r"""
     document.addEventListener('DOMContentLoaded', bindWorkbenchFilters);
   } else {
     bindWorkbenchFilters();
+  }
+}());
+"""
+
+REPORT_JS = (
+    REPORT_JS
+    .replace("前台重试结果见前台证据状态", "调查结果见市场调查")
+    .replace(
+        "日报文件：当前没有新的上传或 daily update 状态；前台重试结果见前台证据状态。",
+        "日报文件：当前没有新的上传或 daily update 状态；调查结果见市场调查。"
+    )
+    .replace("当前前台队列 20次验收", "调查队列 20次验收")
+)
+
+REPORT_JS += r"""
+(function () {
+  function compactFrontendRetryText(value) {
+    var text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return text;
+    if (text.indexOf('等待本机服务返回状态') !== -1) return '等待本机服务返回状态。';
+    if (text.indexOf('当前前台队列刷新') !== -1) {
+      var passed = text.match(/(?:今日证据|本轮队列)\s*([0-9]+\/[0-9]+)/);
+      var refreshed = text.match(/新读\s*([0-9]+)/);
+      var failed = text.match(/失败\s*([0-9]+)/);
+      var prefix = text.indexOf('未达标') !== -1 ? '调查待补' : '调查完成';
+      if (passed) {
+        return prefix + '：本轮队列 ' + passed[1]
+          + (refreshed ? '，新读 ' + refreshed[1] : '')
+          + (failed ? '，失败 ' + failed[1] : '')
+          + '。';
+      }
+    }
+    if (text.indexOf('正在刷新') !== -1 || text.indexOf('运行 daily update') !== -1) {
+      var step = text.match(/第\s*([0-9]+\/[0-9]+)\s*步/);
+      var elapsed = text.match(/已运行\s*([0-9]+)\s*秒/);
+      return '运行中'
+        + (step ? '，进度 ' + step[1] : '')
+        + (elapsed ? '，已运行 ' + elapsed[1] + ' 秒' : '')
+        + '。';
+    }
+    return text;
+  }
+
+  function compactTarget(target) {
+    if (!target || target.dataset.frontendRetryCompactLock === '1') return;
+    var next = compactFrontendRetryText(target.textContent);
+    if (next && next !== target.textContent) {
+      target.dataset.frontendRetryCompactLock = '1';
+      target.textContent = next;
+      delete target.dataset.frontendRetryCompactLock;
+    }
+  }
+
+  function bindCompactFrontendRetryStatus() {
+    document.querySelectorAll('[data-run-report-status="frontend-retry"]').forEach(function (target) {
+      compactTarget(target);
+      if (target.dataset.frontendRetryCompactBound === '1') return;
+      target.dataset.frontendRetryCompactBound = '1';
+      new MutationObserver(function () {
+        compactTarget(target);
+      }).observe(target, { childList: true, characterData: true, subtree: true });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindCompactFrontendRetryStatus);
+  } else {
+    bindCompactFrontendRetryStatus();
   }
 }());
 """

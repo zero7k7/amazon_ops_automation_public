@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import importlib.util
 import re
 import urllib.error
@@ -42,7 +43,7 @@ def fetch_html_urllib(url: str, timeout: int, *, user_agent: str) -> tuple[str, 
         with urllib.request.urlopen(request, timeout=timeout) as response:
             charset = response.headers.get_content_charset() or "utf-8"
             return response.read().decode(charset, errors="replace"), ""
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.IncompleteRead) as exc:
         return "", str(exc)
 
 

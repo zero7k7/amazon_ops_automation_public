@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 
 from .report_presentation import build_report_view
 from .analyze_rules import money_symbol_for_marketplace
+from .sellersprite_fusion import FUSION_COLUMNS
 
 PERCENT_COLUMNS = {
     "CTR",
@@ -21,6 +22,19 @@ PERCENT_COLUMNS = {
     "break_even_acos",
     "目标 ACOS",
     "target_acos",
+    "current_7d_acos",
+    "current_7d_target_acos",
+    "current_7d_tacos",
+    "current_14d_acos",
+    "current_14d_tacos",
+    "pre_7d_tacos",
+    "post_3d_acos",
+    "post_3d_tacos",
+    "post_7d_acos",
+    "post_7d_tacos",
+    "seller_sprite_traffic_share",
+    "seller_sprite_purchase_rate",
+    "ad_acos",
 }
 CURRENCY_COLUMNS = {
     "spend",
@@ -33,6 +47,17 @@ CURRENCY_COLUMNS = {
     "广告前利润/件",
     "花费",
     "销售额",
+    "current_7d_spend",
+    "current_7d_ad_sales",
+    "current_7d_promoted_ad_sales",
+    "current_7d_halo_ad_sales",
+    "current_14d_spend",
+    "current_14d_ad_sales",
+    "current_14d_promoted_ad_sales",
+    "current_14d_halo_ad_sales",
+    "ad_spend",
+    "ad_sales",
+    "seller_sprite_ppc",
 }
 COUNT_COLUMNS = {
     "impressions",
@@ -69,7 +94,66 @@ COUNT_COLUMNS = {
     "展示",
     "加购",
     "购买",
+    "current_7d_clicks",
+    "current_7d_ad_orders",
+    "current_7d_promoted_ad_orders",
+    "current_7d_halo_ad_orders",
+    "current_7d_total_orders",
+    "current_7d_available_stock",
+    "current_14d_clicks",
+    "current_14d_ad_orders",
+    "current_14d_promoted_ad_orders",
+    "current_14d_halo_ad_orders",
+    "current_14d_total_orders",
+    "current_14d_available_stock",
+    "pre_7d_promoted_ad_orders",
+    "pre_7d_total_orders",
+    "post_3d_days",
+    "post_3d_promoted_ad_orders",
+    "post_3d_total_orders",
+    "post_3d_available_stock",
+    "post_7d_days",
+    "post_7d_promoted_ad_orders",
+    "post_7d_total_orders",
+    "post_7d_available_stock",
+    "seller_sprite_monthly_searches",
+    "seller_sprite_purchases",
+    "seller_sprite_natural_rank",
+    "seller_sprite_spr",
 }
+TODAY_TASK_QUEUE_COLUMNS = [
+    "marketplace",
+    "sku",
+    "asin",
+    "priority",
+    "issue_type",
+    "action_group",
+    "today_action",
+    "search_term_or_target",
+    "suggested_action",
+    "normalized_action",
+    "action_id",
+    "product_name",
+    "confirmed_status",
+    "primary_reason",
+    "key_evidence",
+    "tomorrow_check",
+    "source_section",
+    "copy_action_line",
+    "copy_block",
+    "action_scope",
+    "final_decision",
+    "final_decision_label",
+    "today_allowed_actions",
+    "today_blocked_actions",
+    "fusion_action_gate",
+    "fusion_today_action",
+    "fusion_do_not_do",
+    "fusion_review_window",
+    "review_status",
+    "why_still_active",
+    "downgrade_condition",
+]
 FILL_RED = PatternFill(fill_type="solid", fgColor="FDE2E1")
 FILL_GREEN = PatternFill(fill_type="solid", fgColor="E2F4E8")
 FILL_YELLOW = PatternFill(fill_type="solid", fgColor="FFF4CC")
@@ -158,6 +242,24 @@ def _append_dataframe_sheet(workbook: Workbook, title: str, frame: pd.DataFrame)
 
     _apply_number_format(sheet, frame)
     _apply_row_fill(sheet, frame, title)
+
+
+def _append_dataframe_sheet_keep_headers(workbook: Workbook, title: str, frame: pd.DataFrame) -> None:
+    if frame.empty and list(frame.columns):
+        frame = pd.DataFrame([{column: "" for column in frame.columns}])
+    _append_dataframe_sheet(workbook, title, frame)
+
+
+def _ensure_frame_columns(frame: pd.DataFrame, required_columns: list[str]) -> pd.DataFrame:
+    if frame.empty and not list(frame.columns):
+        return pd.DataFrame(columns=required_columns)
+    frame = frame.copy()
+    for column in required_columns:
+        if column not in frame.columns:
+            frame[column] = ""
+    ordered_columns = [column for column in required_columns if column in frame.columns]
+    ordered_columns.extend(column for column in frame.columns if column not in ordered_columns)
+    return frame.loc[:, ordered_columns]
 
 
 def _add_sheet_index(workbook: Workbook) -> None:
@@ -345,10 +447,20 @@ def generate_excel_report(output_path: Path, report_date, analysis_payload: dict
     inventory_profit_frame = pd.DataFrame(analysis_payload.get("库存 / 利润压力风险", []))
     search_term_suggestion_frame = pd.DataFrame(report_view.get("search_term_suggestion_rows", []))
     search_term_processing_frame = pd.DataFrame(report_view.get("search_term_processing_queue_rows", []))
+    seller_sprite_ads_fusion_frame = pd.DataFrame(
+        report_view.get("seller_sprite_ads_fusion_rows", []),
+        columns=FUSION_COLUMNS,
+    )
     no_order_diagnosis_frame = pd.DataFrame(analysis_payload.get("无单原因诊断", []))
     inventory_replenishment_frame = pd.DataFrame(analysis_payload.get("inventory_replenishment", {}).get("rows", []))
     product_final_decision_frame = pd.DataFrame(report_view.get("product_final_decision_rows", []))
-    today_task_queue_frame = pd.DataFrame(report_view.get("today_task_queue_rows", []))
+    product_operation_card_frame = pd.DataFrame(report_view.get("product_operation_cards", []))
+    frontend_check_queue_frame = pd.DataFrame(report_view.get("frontend_check_queue_rows", []))
+    market_survey_fetch_plan_frame = pd.DataFrame(report_view.get("market_survey_selective_fetch_plan", []))
+    today_task_queue_frame = _ensure_frame_columns(
+        pd.DataFrame(report_view.get("today_task_queue_rows", [])),
+        TODAY_TASK_QUEUE_COLUMNS,
+    )
     tomorrow_review_frame = pd.DataFrame(report_view.get("tomorrow_review_rows", []))
     true_unsold_diagnosis_frame = pd.DataFrame(report_view.get("true_unsold_diagnosis_rows", []))
     recent_conversion_cliff_diagnosis_frame = pd.DataFrame(report_view.get("recent_conversion_cliff_diagnosis_rows", []))
@@ -359,17 +471,22 @@ def generate_excel_report(output_path: Path, report_date, analysis_payload: dict
     request_frame = pd.DataFrame(analysis_payload.get("enhanced_data_requests", []))
     scale_candidate_frame = pd.DataFrame(report_view.get("scale_rows", []))
     scale_keyword_frame = pd.DataFrame(report_view.get("scale_keyword_rows", []))
+    growth_test_frame = pd.DataFrame(report_view.get("growth_test_rows", []))
 
     _append_dataframe_sheet(workbook, "今日总览", _build_single_overview_frame(analysis_payload, report_view))
-    _append_dataframe_sheet(workbook, "今日动作清单", today_task_queue_frame)
+    _append_dataframe_sheet_keep_headers(workbook, "今日动作清单", today_task_queue_frame)
     _append_dataframe_sheet(workbook, "明日复查清单", tomorrow_review_frame)
     _append_dataframe_sheet(workbook, "库存补货提醒", inventory_replenishment_frame)
     _append_dataframe_sheet(workbook, "产品最终决策", product_final_decision_frame)
+    _append_dataframe_sheet(workbook, "产品运营卡", product_operation_card_frame)
+    _append_dataframe_sheet(workbook, "前台证据队列", frontend_check_queue_frame)
+    _append_dataframe_sheet(workbook, "市场调查采集计划", market_survey_fetch_plan_frame)
     _append_dataframe_sheet(workbook, "昨日异常归因摘要", pd.DataFrame(report_view.get("yesterday_attribution_rows", [])))
     _append_dataframe_sheet(workbook, "执行后效果复盘", pd.DataFrame(report_view.get("action_effect_review_rows", [])))
     _append_dataframe_sheet(workbook, "词级执行复盘", pd.DataFrame(report_view.get("keyword_action_effect_review_rows", [])))
     _append_dataframe_sheet(workbook, "放量候选", scale_candidate_frame)
     _append_dataframe_sheet(workbook, "放量词候选", scale_keyword_frame)
+    _append_dataframe_sheet(workbook, "小预算试投", growth_test_frame)
     _append_dataframe_sheet(workbook, "运营日报摘要", _build_single_summary_frame(report_view))
     _append_dataframe_sheet(workbook, "产品汇总", _window_payload_to_frame(analysis_payload["产品汇总"]))
     _append_dataframe_sheet(workbook, "广告活动汇总", _window_payload_to_frame(analysis_payload["广告活动汇总"]))
@@ -387,6 +504,7 @@ def generate_excel_report(output_path: Path, report_date, analysis_payload: dict
     _append_dataframe_sheet(workbook, "库存利润压力风险", inventory_profit_frame)
     _append_dataframe_sheet(workbook, "搜索词建议", search_term_suggestion_frame)
     _append_dataframe_sheet(workbook, "广告处理队列", search_term_processing_frame)
+    _append_dataframe_sheet_keep_headers(workbook, "卖家精灵广告融合明细", seller_sprite_ads_fusion_frame)
     _append_dataframe_sheet(workbook, "近期转化断崖诊断", recent_conversion_cliff_diagnosis_frame)
     _append_dataframe_sheet(workbook, "真无单滞销诊断", true_unsold_diagnosis_frame)
     _append_dataframe_sheet(workbook, "广告无转化诊断", ad_no_conversion_diagnosis_frame)
@@ -401,6 +519,37 @@ def generate_excel_report(output_path: Path, report_date, analysis_payload: dict
 
 
 def _build_all_overview_frame(results: list[dict], source_files: dict, import_summary: dict, report_date: str) -> pd.DataFrame:
+    frontend_coverage_totals = {
+        "frontend_queue_total": 0,
+        "frontend_product_page_success_count": 0,
+        "frontend_competitor_search_success_count": 0,
+        "frontend_own_sellersprite_count": 0,
+        "frontend_own_sellersprite_today_count": 0,
+        "frontend_own_sellersprite_cache_count": 0,
+        "frontend_own_sellersprite_pending_count": 0,
+        "frontend_own_sellersprite_failed_count": 0,
+        "frontend_sellersprite_trend_ready_count": 0,
+        "frontend_competitor_discovery_count": 0,
+        "frontend_competitor_pool_count": 0,
+        "frontend_competitor_pool_today_count": 0,
+        "frontend_competitor_pool_cache_count": 0,
+        "frontend_competitor_pool_pending_count": 0,
+        "frontend_competitor_pool_failed_count": 0,
+        "frontend_competitor_sellersprite_count": 0,
+        "frontend_competitor_sellersprite_today_count": 0,
+        "frontend_competitor_sellersprite_cache_count": 0,
+        "frontend_competitor_sellersprite_pending_count": 0,
+        "frontend_competitor_sellersprite_asin_count": 0,
+        "frontend_amazon_search_validation_count": 0,
+        "frontend_scalable_strong_count": 0,
+        "frontend_weak_defensive_count": 0,
+        "frontend_insufficient_count": 0,
+        "market_survey_complete_count": 0,
+        "market_survey_usable_count": 0,
+        "market_survey_insufficient_count": 0,
+        "market_survey_failed_count": 0,
+    }
+    market_survey_score_total = 0.0
     rows = [
         {"分组": "本次运行信息", "指标": "报告日期", "值": report_date},
         {"分组": "本次运行信息", "指标": "广告原始文件", "值": source_files.get("ads_raw", "")},
@@ -415,6 +564,11 @@ def _build_all_overview_frame(results: list[dict], source_files: dict, import_su
     ]
     for result in results:
         summary = result["summary"]
+        coverage = (result.get("report_view") or {}).get("frontend_coverage_summary", {})
+        if isinstance(coverage, dict):
+            for key in frontend_coverage_totals:
+                frontend_coverage_totals[key] += int(float(coverage.get(key, 0) or 0))
+            market_survey_score_total += float(coverage.get("market_survey_average_score", 0) or 0) * int(float(coverage.get("frontend_queue_total", 0) or 0))
         rows.extend(
             [
                 {"分组": f"{summary['marketplace']} 状态", "指标": "广告行数", "值": summary["ads_row_count"]},
@@ -425,6 +579,41 @@ def _build_all_overview_frame(results: list[dict], source_files: dict, import_su
                 {"分组": f"{summary['marketplace']} 状态", "指标": "ERP 报表覆盖范围", "值": summary.get("erp_report_coverage_date_range", summary["erp_date_range"])},
                 {"分组": f"{summary['marketplace']} 状态", "指标": "ERP 实际有销量日期", "值": summary.get("erp_observed_sales_date_range", summary["erp_date_range"])},
                 {"分组": f"{summary['marketplace']} 状态", "指标": "ERP 补零说明", "值": summary.get("coverage_warning", "") or "无需补零"},
+            ]
+        )
+    frontend_total = frontend_coverage_totals["frontend_queue_total"]
+    if frontend_total:
+        market_survey_average = round(market_survey_score_total / frontend_total, 1)
+        rows.extend(
+            [
+                {"分组": "前台证据覆盖", "指标": "ALL 前台队列", "值": frontend_total},
+                {"分组": "前台证据覆盖", "指标": "ALL 市场调查平均完整度", "值": f"{market_survey_average}/100"},
+                {"分组": "前台证据覆盖", "指标": "ALL 市场调查完整", "值": f'{frontend_coverage_totals["market_survey_complete_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 市场调查可用", "值": f'{frontend_coverage_totals["market_survey_usable_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 市场调查待补", "值": f'{frontend_coverage_totals["market_survey_insufficient_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 市场调查失败", "值": f'{frontend_coverage_totals["market_survey_failed_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 产品页成功", "值": f'{frontend_coverage_totals["frontend_product_page_success_count"]}/{frontend_total}'},
+                {
+                    "分组": "前台证据覆盖",
+                    "指标": "ALL 卖家精灵自己 ASIN",
+                    "值": f'今日 {frontend_coverage_totals["frontend_own_sellersprite_today_count"]}/{frontend_total}，缓存 {frontend_coverage_totals["frontend_own_sellersprite_cache_count"]}/{frontend_total}',
+                },
+                {"分组": "前台证据覆盖", "指标": "ALL 卖家精灵趋势", "值": f'{frontend_coverage_totals["frontend_sellersprite_trend_ready_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 卖家精灵竞品发现", "值": f'{frontend_coverage_totals["frontend_competitor_discovery_count"]}/{frontend_total}'},
+                {
+                    "分组": "前台证据覆盖",
+                    "指标": "ALL 卖家精灵竞品池",
+                    "值": f'今日 {frontend_coverage_totals["frontend_competitor_pool_today_count"]}/{frontend_total}，7天缓存 {frontend_coverage_totals["frontend_competitor_pool_cache_count"]}/{frontend_total}',
+                },
+                {
+                    "分组": "前台证据覆盖",
+                    "指标": "ALL 竞品 ASIN 反查",
+                    "值": f'今日 {frontend_coverage_totals["frontend_competitor_sellersprite_today_count"]}/{frontend_total}，缓存 {frontend_coverage_totals["frontend_competitor_sellersprite_cache_count"]}/{frontend_total}',
+                },
+                {"分组": "前台证据覆盖", "指标": "ALL Amazon 搜索页辅助验证", "值": f'{frontend_coverage_totals["frontend_amazon_search_validation_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 达到放量准入", "值": f'{frontend_coverage_totals["frontend_scalable_strong_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 弱势止损证据", "值": f'{frontend_coverage_totals["frontend_weak_defensive_count"]}/{frontend_total}'},
+                {"分组": "前台证据覆盖", "指标": "ALL 证据不足", "值": f'{frontend_coverage_totals["frontend_insufficient_count"]}/{frontend_total}'},
             ]
         )
     return pd.DataFrame(rows)
@@ -541,6 +730,97 @@ def generate_all_marketplace_excel_report(
     workbook.remove(workbook.active)
     _append_dataframe_sheet(workbook, "总览", _build_all_overview_frame(results, source_files, import_summary, report_date))
     _append_dataframe_sheet(workbook, "Metrics_Validation", _build_metrics_validation_frame(results))
+    _append_dataframe_sheet_keep_headers(
+        workbook,
+        "今日动作清单",
+        _ensure_frame_columns(
+            pd.DataFrame(
+                [
+                    row
+                    for result in results
+                    for row in result.get("report_view", {}).get("today_task_queue_rows", [])
+                ]
+            ),
+            TODAY_TASK_QUEUE_COLUMNS,
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "明日复查清单",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("tomorrow_review_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "产品最终决策",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("product_final_decision_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "产品运营卡",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("product_operation_cards", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "前台证据队列",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("frontend_check_queue_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "Listing待确认",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("listing_price_diagnosis_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "成本利润诊断",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("cost_profit_diagnosis_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "执行后效果复盘",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("action_effect_review_rows", [])
+            ]
+        ),
+    )
     _append_dataframe_sheet(
         workbook,
         "词级执行复盘",
@@ -549,6 +829,62 @@ def generate_all_marketplace_excel_report(
                 row
                 for result in results
                 for row in result.get("report_view", {}).get("keyword_action_effect_review_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "放量候选",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("scale_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "放量词候选",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("scale_keyword_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "广告处理队列",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("search_term_processing_queue_rows", [])
+            ]
+        ),
+    )
+    _append_dataframe_sheet_keep_headers(
+        workbook,
+        "卖家精灵广告融合明细",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("seller_sprite_ads_fusion_rows", [])
+            ],
+            columns=FUSION_COLUMNS,
+        ),
+    )
+    _append_dataframe_sheet(
+        workbook,
+        "小预算试投",
+        pd.DataFrame(
+            [
+                row
+                for result in results
+                for row in result.get("report_view", {}).get("growth_test_rows", [])
             ]
         ),
     )
@@ -576,10 +912,20 @@ def generate_all_marketplace_excel_report(
             inventory_profit_frame = pd.DataFrame(payload.get("库存 / 利润压力风险", []))
             search_term_suggestion_frame = pd.DataFrame(result["report_view"].get("search_term_suggestion_rows", []))
             search_term_processing_frame = pd.DataFrame(result["report_view"].get("search_term_processing_queue_rows", []))
+            seller_sprite_ads_fusion_frame = pd.DataFrame(
+                result["report_view"].get("seller_sprite_ads_fusion_rows", []),
+                columns=FUSION_COLUMNS,
+            )
             no_order_diagnosis_frame = pd.DataFrame(payload.get("无单原因诊断", []))
             inventory_replenishment_frame = pd.DataFrame(payload.get("inventory_replenishment", {}).get("rows", []))
             product_final_decision_frame = pd.DataFrame(result["report_view"].get("product_final_decision_rows", []))
-            today_task_queue_frame = pd.DataFrame(result["report_view"].get("today_task_queue_rows", []))
+            product_operation_card_frame = pd.DataFrame(result["report_view"].get("product_operation_cards", []))
+            frontend_check_queue_frame = pd.DataFrame(result["report_view"].get("frontend_check_queue_rows", []))
+            market_survey_fetch_plan_frame = pd.DataFrame(result["report_view"].get("market_survey_selective_fetch_plan", []))
+            today_task_queue_frame = _ensure_frame_columns(
+                pd.DataFrame(result["report_view"].get("today_task_queue_rows", [])),
+                TODAY_TASK_QUEUE_COLUMNS,
+            )
             tomorrow_review_frame = pd.DataFrame(result["report_view"].get("tomorrow_review_rows", []))
             yesterday_attribution_frame = pd.DataFrame(result["report_view"].get("yesterday_attribution_rows", []))
             action_effect_review_frame = pd.DataFrame(
@@ -598,12 +944,16 @@ def generate_all_marketplace_excel_report(
             cost_profit_diagnosis_frame = pd.DataFrame(result["report_view"].get("cost_profit_diagnosis_rows", []))
             request_frame = pd.DataFrame(payload.get("enhanced_data_requests", []))
             scale_keyword_frame = pd.DataFrame(result["report_view"].get("scale_keyword_rows", []))
+            growth_test_frame = pd.DataFrame(result["report_view"].get("growth_test_rows", []))
 
             _append_dataframe_sheet(workbook, f"{marketplace}_今日总览", _build_marketplace_today_frame(result))
-            _append_dataframe_sheet(workbook, f"{marketplace}_今日动作清单", today_task_queue_frame)
+            _append_dataframe_sheet_keep_headers(workbook, f"{marketplace}_今日动作清单", today_task_queue_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_明日复查清单", tomorrow_review_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_库存补货提醒", inventory_replenishment_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_产品最终决策", product_final_decision_frame)
+            _append_dataframe_sheet(workbook, f"{marketplace}_产品运营卡", product_operation_card_frame)
+            _append_dataframe_sheet(workbook, f"{marketplace}_前台证据队列", frontend_check_queue_frame)
+            _append_dataframe_sheet(workbook, f"{marketplace}_市场调查采集计划", market_survey_fetch_plan_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_昨日异常归因", yesterday_attribution_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_执行后复盘", action_effect_review_frame)
             _append_dataframe_sheet(
@@ -619,6 +969,7 @@ def generate_all_marketplace_excel_report(
             )
             _append_dataframe_sheet(workbook, f"{marketplace}_放量候选", scale_candidate_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_放量词候选", scale_keyword_frame)
+            _append_dataframe_sheet(workbook, f"{marketplace}_小预算试投", growth_test_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_操作建议", _json_list_to_frame(payload.get("操作建议", [])))
             _append_dataframe_sheet(workbook, f"{marketplace}_搜索词明细", _window_payload_to_frame(payload.get("搜索词分析", {})))
             _append_dataframe_sheet(workbook, f"{marketplace}_产品汇总", _window_payload_to_frame(payload.get("产品汇总", {})))
@@ -632,6 +983,7 @@ def generate_all_marketplace_excel_report(
             _append_dataframe_sheet(workbook, f"{marketplace}_库存利润压力风险", inventory_profit_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_搜索词建议", search_term_suggestion_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_广告处理队列", search_term_processing_frame)
+            _append_dataframe_sheet_keep_headers(workbook, f"{marketplace}_卖家精灵融合明细", seller_sprite_ads_fusion_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_近期转化断崖诊断", recent_conversion_cliff_diagnosis_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_真无单滞销诊断", true_unsold_diagnosis_frame)
             _append_dataframe_sheet(workbook, f"{marketplace}_广告无转化诊断", ad_no_conversion_diagnosis_frame)

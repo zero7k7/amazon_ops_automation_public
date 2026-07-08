@@ -424,12 +424,12 @@ def parse_search_results_chrome_cdp(
                     with contextlib.suppress(PlaywrightTimeoutError, PlaywrightError):
                         page.wait_for_selector(
                             '[data-component-type="s-search-result"][data-asin]',
-                            timeout=7000,
+                            timeout=4000,
                         )
                     page.mouse.wheel(0, 1400)
-                    page.wait_for_timeout(900)
+                    page.wait_for_timeout(500)
                     with contextlib.suppress(PlaywrightTimeoutError, PlaywrightError):
-                        page.wait_for_load_state("networkidle", timeout=3000)
+                        page.wait_for_load_state("networkidle", timeout=1000)
                     payload = page.evaluate(
                         SEARCH_DOM_EVAL_JS,
                         {"ownAsin": str(own_asin or "").strip().upper(), "limit": limit},

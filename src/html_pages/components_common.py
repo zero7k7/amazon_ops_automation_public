@@ -285,7 +285,7 @@ def _collect_report_counters(
     pending_ad_rows = [
         row
         for row in all_search
-        if not is_done(row) and str(row.get("copy_action_line") or "") in shared.ACTIONABLE_COPY_LINES
+        if not is_done(row) and shared._ad_status_key(row) == "pending"
     ]
     return {
         "p0": sum(1 for row in pending_non_cost if row.get("priority") == "P0"),

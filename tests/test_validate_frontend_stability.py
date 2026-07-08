@@ -1,5 +1,38 @@
 from __future__ import annotations
 
+import http.client
+
+
+def test_urllib_frontend_fetch_returns_error_on_incomplete_read(monkeypatch) -> None:
+    from scripts import frontend_product_fetch
+
+    class FakeHeaders:
+        def get_content_charset(self):
+            return "utf-8"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr(frontend_product_fetch.urllib.request, "urlopen", lambda *args, **kwargs: FakeResponse())
+
+    html, error = frontend_product_fetch.fetch_html_urllib(
+        "https://www.amazon.co.uk/dp/B0DEMOFRNT",
+        1,
+        user_agent="test",
+    )
+
+    assert html == ""
+    assert "IncompleteRead" in error
+
 
 def _attempt(index: int, *, success: bool = True) -> dict[str, object]:
     row = {
@@ -7,7 +40,7 @@ def _attempt(index: int, *, success: bool = True) -> dict[str, object]:
         "marketplace": "UK",
         "asin": "B0DEMOFRNT",
         "success": success,
-        "title": "Demo Adjustable Desk Lamp",
+        "title": "22x16x9cm Natural Metal Tea Organizer",
         "price": "£17.89",
         "rating": "4.2 out of 5 stars",
         "reviews": "(38)",

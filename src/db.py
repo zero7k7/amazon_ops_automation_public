@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
 
 import pandas as pd
 from pandas.api.types import is_number
+
+
+ADS_IMPORT_RAW_KEY_COLUMNS = ["marketplace", "date", "campaign_id", "ad_group_id", "sku", "asin", "search_term", "targeting"]
+ERP_IMPORT_RAW_KEY_COLUMNS = ["marketplace", "date", "sku", "asin"]
+PRODUCT_DAILY_KEY_COLUMNS = ["date", "marketplace", "sku", "asin"]
+CAMPAIGN_DAILY_KEY_COLUMNS = ["date", "marketplace", "campaign_name", "sku", "asin"]
+SEARCH_TERM_DAILY_KEY_COLUMNS = ["date", "marketplace", "search_term", "campaign_name", "sku", "asin"]
 
 
 class AnalyticsDatabase:
@@ -15,6 +23,13 @@ class AnalyticsDatabase:
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
+
+    def _begin_write_transaction(self, connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+
+    def _rollback_suppressing_errors(self, connection: sqlite3.Connection) -> None:
+        with contextlib.suppress(sqlite3.Error):
+            connection.rollback()
 
     def _init_db(self) -> None:
         with self._connect() as connection:
@@ -369,6 +384,24 @@ class AnalyticsDatabase:
         ads_raw: pd.DataFrame,
         erp_raw: pd.DataFrame,
     ) -> dict[str, int]:
+        connection = self._connect()
+        try:
+            self._begin_write_transaction(connection)
+            stats = self._upsert_raw_import_frames(connection, ads_raw, erp_raw)
+            connection.commit()
+            return stats
+        except Exception:
+            self._rollback_suppressing_errors(connection)
+            raise
+        finally:
+            connection.close()
+
+    def _upsert_raw_import_frames(
+        self,
+        connection: sqlite3.Connection,
+        ads_raw: pd.DataFrame,
+        erp_raw: pd.DataFrame,
+    ) -> dict[str, int]:
         stats = {
             "ads_imported_rows": len(ads_raw),
             "erp_imported_rows": len(erp_raw),
@@ -382,51 +415,49 @@ class AnalyticsDatabase:
             "erp_duplicate_skipped_rows": 0,
             "erp_overwrite_updated_rows": 0,
         }
-        with self._connect() as connection:
-            ads_existing = self._load_existing_subset(connection, "ads_import_raw", ads_raw)
-            ads_export, ads_new, ads_dup, ads_update = self._classify_raw_import(
-                incoming=ads_raw,
-                existing=ads_existing,
-                key_columns=["marketplace", "date", "campaign_id", "ad_group_id", "sku", "asin", "search_term", "targeting"],
-                compare_columns=[
-                    "campaign_name",
-                    "ad_group_name",
-                    "match_type",
-                    "impressions",
-                    "clicks",
-                    "spend",
-                    "ad_orders",
-                    "ad_sales",
-                    "click_orders",
-                    "click_sales",
-                    "promoted_ad_orders",
-                    "promoted_ad_sales",
-                    "halo_ad_orders",
-                    "halo_ad_sales",
-                    "halo_ad_units",
-                ],
-            )
-            self._upsert(
-                connection,
-                "ads_import_raw",
-                ads_export,
-                ["marketplace", "date", "campaign_id", "ad_group_id", "sku", "asin", "search_term", "targeting"],
-            )
+        ads_existing = self._load_existing_subset(connection, "ads_import_raw", ads_raw)
+        ads_export, ads_new, ads_dup, ads_update = self._classify_raw_import(
+            incoming=ads_raw,
+            existing=ads_existing,
+            key_columns=ADS_IMPORT_RAW_KEY_COLUMNS,
+            compare_columns=[
+                "campaign_name",
+                "ad_group_name",
+                "match_type",
+                "impressions",
+                "clicks",
+                "spend",
+                "ad_orders",
+                "ad_sales",
+                "click_orders",
+                "click_sales",
+                "promoted_ad_orders",
+                "promoted_ad_sales",
+                "halo_ad_orders",
+                "halo_ad_sales",
+                "halo_ad_units",
+            ],
+        )
+        self._upsert(
+            connection,
+            "ads_import_raw",
+            ads_export,
+            ADS_IMPORT_RAW_KEY_COLUMNS,
+        )
 
-            erp_existing = self._load_existing_subset(connection, "erp_import_raw", erp_raw)
-            erp_export, erp_new, erp_dup, erp_update = self._classify_raw_import(
-                incoming=erp_raw,
-                existing=erp_existing,
-                key_columns=["marketplace", "date", "sku", "asin"],
-                compare_columns=["product_name", "total_orders", "total_sales", "fba_stock", "fbm_stock", "available_stock"],
-            )
-            self._upsert(
-                connection,
-                "erp_import_raw",
-                erp_export,
-                ["marketplace", "date", "sku", "asin"],
-            )
-            connection.commit()
+        erp_existing = self._load_existing_subset(connection, "erp_import_raw", erp_raw)
+        erp_export, erp_new, erp_dup, erp_update = self._classify_raw_import(
+            incoming=erp_raw,
+            existing=erp_existing,
+            key_columns=ERP_IMPORT_RAW_KEY_COLUMNS,
+            compare_columns=["product_name", "total_orders", "total_sales", "fba_stock", "fbm_stock", "available_stock"],
+        )
+        self._upsert(
+            connection,
+            "erp_import_raw",
+            erp_export,
+            ERP_IMPORT_RAW_KEY_COLUMNS,
+        )
 
         stats["ads_added_rows"] = ads_new
         stats["ads_duplicate_skipped_rows"] = ads_dup
@@ -452,14 +483,51 @@ class AnalyticsDatabase:
                 )
 
     def upsert_daily_frames(self, product_daily: pd.DataFrame, campaign_daily: pd.DataFrame, search_term_daily: pd.DataFrame) -> None:
-        with self._connect() as connection:
-            self._delete_existing_scope(connection, "product_daily", product_daily)
-            self._delete_existing_scope(connection, "campaign_daily", campaign_daily)
-            self._delete_existing_scope(connection, "search_term_daily", search_term_daily)
-            self._upsert(connection, "product_daily", product_daily, ["date", "marketplace", "sku", "asin"])
-            self._upsert(connection, "campaign_daily", campaign_daily, ["date", "marketplace", "campaign_name", "sku", "asin"])
-            self._upsert(connection, "search_term_daily", search_term_daily, ["date", "marketplace", "search_term", "campaign_name", "sku", "asin"])
+        connection = self._connect()
+        try:
+            self._begin_write_transaction(connection)
+            self._upsert_daily_frames(connection, product_daily, campaign_daily, search_term_daily)
             connection.commit()
+        except Exception:
+            self._rollback_suppressing_errors(connection)
+            raise
+        finally:
+            connection.close()
+
+    def _upsert_daily_frames(
+        self,
+        connection: sqlite3.Connection,
+        product_daily: pd.DataFrame,
+        campaign_daily: pd.DataFrame,
+        search_term_daily: pd.DataFrame,
+    ) -> None:
+        self._delete_existing_scope(connection, "product_daily", product_daily)
+        self._delete_existing_scope(connection, "campaign_daily", campaign_daily)
+        self._delete_existing_scope(connection, "search_term_daily", search_term_daily)
+        self._upsert(connection, "product_daily", product_daily, PRODUCT_DAILY_KEY_COLUMNS)
+        self._upsert(connection, "campaign_daily", campaign_daily, CAMPAIGN_DAILY_KEY_COLUMNS)
+        self._upsert(connection, "search_term_daily", search_term_daily, SEARCH_TERM_DAILY_KEY_COLUMNS)
+
+    def import_raw_and_daily_frames(
+        self,
+        ads_raw: pd.DataFrame,
+        erp_raw: pd.DataFrame,
+        product_daily: pd.DataFrame,
+        campaign_daily: pd.DataFrame,
+        search_term_daily: pd.DataFrame,
+    ) -> dict[str, int]:
+        connection = self._connect()
+        try:
+            self._begin_write_transaction(connection)
+            stats = self._upsert_raw_import_frames(connection, ads_raw, erp_raw)
+            self._upsert_daily_frames(connection, product_daily, campaign_daily, search_term_daily)
+            connection.commit()
+            return stats
+        except Exception:
+            self._rollback_suppressing_errors(connection)
+            raise
+        finally:
+            connection.close()
 
     def load_history(self, as_of_date, marketplace: str | None = None) -> dict[str, pd.DataFrame]:
         query_date = str(as_of_date)

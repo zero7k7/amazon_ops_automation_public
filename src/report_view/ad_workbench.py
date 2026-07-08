@@ -25,6 +25,13 @@ def _normalize_today_action(shared: Any, text: object, issue_type: str = "") -> 
     return "不操作，仅复查"
 
 
+def _with_action_identity(shared: Any, row: dict[str, object], action: object) -> dict[str, object]:
+    add_identity = getattr(shared, "add_action_identity", None)
+    if callable(add_identity):
+        return add_identity(row, action)
+    return row
+
+
 def _search_term_action_from_item(shared: Any, item: dict, marketplace: str) -> dict[str, str]:
     evidence = item.get("evidence", {}) or {}
     target = str(item.get("target") or evidence.get("search_term") or "")
@@ -126,7 +133,7 @@ def _search_term_action_from_item(shared: Any, item: dict, marketplace: str) -> 
 
     copy_block = f"{copy_action_line}\n{target or 'N/A'}"
 
-    return {
+    return _with_action_identity(shared, {
         "marketplace": evidence.get("marketplace") or marketplace,
         "product_name": evidence.get("product_name") or evidence.get("sku") or "N/A",
         "sku": evidence.get("sku") or "N/A",
@@ -154,7 +161,7 @@ def _search_term_action_from_item(shared: Any, item: dict, marketplace: str) -> 
         "copy_block": copy_block,
         "reason": reason,
         "html_visible": "否" if clicks <= 2 and orders == 0 else "是",
-    }
+    }, suggested_action)
 
 
 def _build_search_term_processing_queue(shared: Any, analysis_payload: dict) -> list[dict[str, str]]:
@@ -282,7 +289,8 @@ def _build_scale_keyword_rows(shared: Any, analysis_payload: dict, scale_rows: l
             reason = "14天有广告单且 ACOS 低于目标，但点击/订单样本不足；仅保留观察，避免用 1 次成交追高。"
         else:
             reason = "14天有广告单且 ACOS 低于产品目标；词级放量依据来自广告搜索词真实出单数据。"
-        rows.append(
+        rows.append(_with_action_identity(
+            shared,
             {
                 "marketplace": str(product_scale["marketplace"] or marketplace),
                 "product_name": str(item.get("product_name") or product_scale["product"] or "N/A"),
@@ -307,8 +315,9 @@ def _build_scale_keyword_rows(shared: Any, analysis_payload: dict, scale_rows: l
                 "scale_action": action,
                 "reason": reason,
                 "product_scale_level": str(product_scale["level"] or "谨慎放量候选"),
-            }
-        )
+            },
+            action,
+        ))
 
     return sorted(
         rows,

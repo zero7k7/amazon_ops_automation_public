@@ -389,7 +389,15 @@ def run_chrome_cdp_probe(
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             page = context.pages[0] if context.pages else context.new_page()
-            location_setup_note = _warm_location_setup(page, url, marketplace, timeout_seconds, PlaywrightTimeoutError)
+            warm_rounds = 1 if attempts < 20 else 3
+            location_setup_note = _warm_location_setup(
+                page,
+                url,
+                marketplace,
+                timeout_seconds,
+                PlaywrightTimeoutError,
+                max_rounds=warm_rounds,
+            )
             if not _verified_location_setup(location_setup_note, marketplace):
                 location_setup_note = ""
             for index in range(1, attempts + 1):

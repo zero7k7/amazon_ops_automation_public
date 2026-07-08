@@ -34,6 +34,7 @@ This public demo is designed for local macOS and Windows basic end-to-end verifi
 - Computes rolling product and search-term metrics.
 - Produces HTML, JSON, Markdown, and Excel reports.
 - Builds an operations workbench for ad actions, low-budget keyword tests, frontend evidence, and review queues.
+- Includes the public-safe version of the current operations workflow: market evidence completeness checks, SellerSprite-style enrichment hooks, action review, keyword review, and daily update validation.
 - Keeps optional Amazon frontend checks as best-effort enrichment, not a hard dependency.
 - Includes a local demo data generator so the project can run after clone.
 

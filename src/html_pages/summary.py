@@ -5,11 +5,73 @@ from pathlib import Path
 from typing import Any
 
 
+def _apply_product_card_coverage_fallback(totals: dict[str, int], product_cards: list[dict[str, str]]) -> None:
+    if not product_cards:
+        return
+    total = int(totals.get("frontend_queue_total") or 0)
+    if not total:
+        return
+    if int(totals.get("frontend_own_sellersprite_count") or 0) <= 0:
+        totals["frontend_own_sellersprite_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("seller_sprite_check_status") or "").strip()
+            and str(row.get("seller_sprite_check_status") or "").strip() != "无缓存"
+        )
+    if int(totals.get("frontend_competitor_discovery_count") or 0) <= 0:
+        totals["frontend_competitor_discovery_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("competitor_discovery_status") or "").strip() in {"已抓取", "沿用缓存", "缓存"}
+        )
+    if int(totals.get("frontend_competitor_sellersprite_count") or 0) <= 0:
+        competitor_count = 0
+        competitor_asins = 0
+        for row in product_cards:
+            try:
+                count = int(float(row.get("competitor_sellersprite_asin_count") or 0))
+            except (TypeError, ValueError):
+                count = 0
+            if count > 0:
+                competitor_count += 1
+                competitor_asins += count
+        totals["frontend_competitor_sellersprite_count"] = competitor_count
+        totals["frontend_competitor_sellersprite_asin_count"] = competitor_asins
+    if int(totals.get("frontend_competitor_pool_count") or 0) <= 0:
+        totals["frontend_competitor_pool_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("competitor_pool_status") or "").strip()
+            and str(row.get("competitor_pool_status") or "").strip() not in {"待补", "卖家精灵证据不足", "竞品证据不足"}
+        )
+    if int(totals.get("frontend_amazon_search_validation_count") or 0) <= 0:
+        totals["frontend_amazon_search_validation_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("amazon_search_validation_status") or "").strip() in {"已验证", "已读，无池内竞品", "部分"}
+        )
+    if int(totals.get("frontend_weak_defensive_count") or 0) <= 0:
+        totals["frontend_weak_defensive_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("product_level_conclusion") or "").strip() in {"产品问题优先", "暂停扩张", "只防守"}
+        )
+    if int(totals.get("frontend_insufficient_count") or 0) <= 0:
+        totals["frontend_insufficient_count"] = sum(
+            1
+            for row in product_cards
+            if str(row.get("competitor_pool_status") or "").strip() in {"", "待补", "卖家精灵证据不足", "竞品证据不足"}
+            or str(row.get("competitor_sellersprite_status") or "").strip() in {"", "待补", "竞品反查待补", "竞品卖家精灵证据不足"}
+        )
+
+
 def write_summary_html(shared: Any, results: list[dict], output_path: Path, report_date: str) -> None:
     results = shared._sort_results_by_marketplace(results)
     all_tasks: list[dict[str, str]] = []
     all_reviews: list[dict[str, str]] = []
     all_search: list[dict[str, str]] = []
+    all_scale_keywords: list[dict[str, str]] = []
+    all_growth_tests: list[dict[str, str]] = []
     all_listing_reviews: list[dict[str, str]] = []
     all_yesterday_attribution: list[dict[str, str]] = []
     all_action_effect_reviews: list[dict[str, str]] = []
@@ -17,6 +79,47 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
     all_inventory_replenishment: list[dict[str, str]] = []
     all_product_cards: list[dict[str, str]] = []
     quality_rows: list[dict[str, str]] = []
+    frontend_coverage_totals = {
+        "frontend_queue_total": 0,
+        "frontend_usable_evidence_count": 0,
+        "frontend_decision_ready_count": 0,
+        "frontend_reference_evidence_count": 0,
+        "frontend_live_success_count": 0,
+        "frontend_cached_count": 0,
+        "frontend_pending_or_stale_count": 0,
+        "frontend_search_success_count": 0,
+        "frontend_search_partial_count": 0,
+        "frontend_product_page_success_count": 0,
+        "frontend_competitor_search_success_count": 0,
+        "frontend_own_sellersprite_count": 0,
+        "frontend_own_sellersprite_today_count": 0,
+        "frontend_own_sellersprite_cache_count": 0,
+        "frontend_own_sellersprite_pending_count": 0,
+        "frontend_own_sellersprite_failed_count": 0,
+        "frontend_sellersprite_trend_ready_count": 0,
+        "frontend_competitor_discovery_count": 0,
+        "frontend_competitor_pool_count": 0,
+        "frontend_competitor_pool_today_count": 0,
+        "frontend_competitor_pool_cache_count": 0,
+        "frontend_competitor_pool_pending_count": 0,
+        "frontend_competitor_pool_failed_count": 0,
+        "frontend_competitor_sellersprite_count": 0,
+        "frontend_competitor_sellersprite_today_count": 0,
+        "frontend_competitor_sellersprite_cache_count": 0,
+        "frontend_competitor_sellersprite_pending_count": 0,
+        "frontend_competitor_sellersprite_asin_count": 0,
+        "frontend_amazon_search_validation_count": 0,
+        "frontend_scalable_strong_count": 0,
+        "frontend_weak_defensive_count": 0,
+        "frontend_insufficient_count": 0,
+        "frontend_strong_evidence_count": 0,
+        "frontend_background_evidence_count": 0,
+        "market_survey_complete_count": 0,
+        "market_survey_usable_count": 0,
+        "market_survey_insufficient_count": 0,
+        "market_survey_failed_count": 0,
+    }
+    market_survey_score_total = 0.0
     for result in results:
         if not result.get("has_data"):
             continue
@@ -24,17 +127,29 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         all_tasks.extend(view.get("today_task_queue_rows", []))
         all_reviews.extend(view.get("tomorrow_review_rows", []))
         all_search.extend(view.get("html_search_term_processing_queue_rows", []))
+        all_scale_keywords.extend(view.get("scale_keyword_rows", []))
+        all_growth_tests.extend(view.get("growth_test_rows", []))
         all_inventory_replenishment.extend(view.get("inventory_replenishment_rows", []))
         for row in view.get("listing_price_diagnosis_rows", []):
             all_listing_reviews.append(dict(row))
         all_yesterday_attribution.extend(view.get("yesterday_attribution_rows", []))
         all_product_cards.extend(view.get("product_operation_cards", []))
+        all_product_cards.extend(view.get("product_final_decision_rows", []))
         for row in view.get("action_effect_review_rows", []):
             if row not in all_action_effect_reviews:
                 all_action_effect_reviews.append(row)
         for row in view.get("keyword_action_effect_review_rows", []):
             if row not in all_keyword_action_effect_reviews:
                 all_keyword_action_effect_reviews.append(row)
+        coverage = view.get("frontend_coverage_summary", {})
+        if isinstance(coverage, dict):
+            queue_total = int(float(coverage.get("frontend_queue_total", 0) or 0))
+            market_survey_score_total += float(coverage.get("market_survey_average_score", 0) or 0) * queue_total
+            for key in frontend_coverage_totals:
+                try:
+                    frontend_coverage_totals[key] += int(float(coverage.get(key, 0) or 0))
+                except (TypeError, ValueError):
+                    continue
         quality_rows.append(
             {
                 "站点": result.get("marketplace", "N/A"),
@@ -115,17 +230,108 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         fallback = str(row.get("primary_reason") or row.get("review_reason") or row.get("key_evidence") or "").strip()
         return "；".join(reasons[:3]) or clean_text(fallback, 40)
 
-    def summary_item(title: str, reason: object, action: object = "", status: str = "") -> str:
+    def summary_item(title: str, reason: object, action: object = "", status: str = "", reason_limit: int = 64) -> str:
         status_html = f' <span class="{shared._confirmed_tag(status)}">{html.escape(status)}</span>' if status else ""
         return (
             '<div class="summary-item">'
             f"<strong>{html.escape(title)}{status_html}</strong>"
-            f'<div class="subtle">{shared._inline_markup(clean_text(reason))}</div>'
+            f'<div class="subtle">{shared._inline_markup(clean_text(reason, reason_limit))}</div>'
             + (f"<div>{shared._inline_markup(clean_text(action))}</div>" if action else "")
             + "</div>"
         )
 
-    counters = shared._collect_report_counters(all_tasks, all_search, all_reviews, quality_rows, all_listing_reviews)
+    def review_flag(row: dict[str, str], field: str) -> bool:
+        return str(row.get(field) or "").strip().lower() in {"1", "true", "yes", "y", "是"}
+
+    def review_display_judgement(row: dict[str, str]) -> str:
+        judgement = str(row.get("judgement") or row.get("outcome") or "待复查")
+        if review_flag(row, "halo_only_conversion") or review_flag(row, "target_sku_not_converted"):
+            return "本 SKU 未验证"
+        if str(row.get("review_outcome") or "").strip() == "needs_manual_review":
+            return "待人工复查"
+        positive_judgements = {"明确改善", "初步有效", "有改善迹象", "有效", "可保留"}
+        if judgement in positive_judgements and not review_flag(row, "promoted_conversion_improved"):
+            return "本 SKU 未验证"
+        return judgement
+
+    def review_display_next_step(row: dict[str, str]) -> str:
+        if review_flag(row, "halo_only_conversion"):
+            return "仅光环成交，不算本 SKU 有效；今天不追加预算或竞价。"
+        if review_flag(row, "target_sku_not_converted"):
+            return "本 SKU 未验证成交；今天不追加预算或竞价。"
+        if review_display_judgement(row) == "本 SKU 未验证":
+            return "缺少本 SKU 转化证据；今天不追加预算或竞价。"
+        return str(row.get("next_step") or "继续观察，等待足够样本。")
+
+    def review_metric_value(value: object) -> str:
+        text = str(value or "").strip()
+        if text.lower() in {"", "nan", "none", "null"}:
+            return ""
+        return text
+
+    def metric_number(value: object) -> float | None:
+        text = review_metric_value(value)
+        if not text:
+            return None
+        if text.endswith("%"):
+            text = text[:-1].strip()
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def compact_number(value: object) -> str:
+        text = review_metric_value(value)
+        number = metric_number(text)
+        if number is None:
+            return text
+        if number.is_integer():
+            return str(int(number))
+        return f"{number:.2f}".rstrip("0").rstrip(".")
+
+    def compact_percent(value: object) -> str:
+        text = review_metric_value(value)
+        if not text:
+            return ""
+        number = metric_number(text)
+        if number is None:
+            return text
+        percent = number * 100 if abs(number) <= 1 else number
+        if percent.is_integer():
+            return f"{int(percent)}%"
+        return f"{percent:.1f}".rstrip("0").rstrip(".") + "%"
+
+    def review_metric_brief(row: dict[str, str]) -> str:
+        metrics: list[str] = []
+        days_since = shared._optional_num_from_text(row.get("days_since_execution"))
+        if days_since is not None and days_since < 3:
+            return ""
+        field_labels = [
+            ("current_7d_promoted_ad_orders", "本 SKU 单", compact_number),
+            ("current_7d_acos", "ACOS", compact_percent),
+            ("current_7d_target_acos", "目标 ACOS", compact_percent),
+            ("current_7d_tacos", "TACOS", compact_percent),
+            ("current_7d_total_orders", "总单", compact_number),
+            ("current_7d_available_stock", "库存", compact_number),
+        ]
+        if days_since is None or days_since >= 7:
+            field_labels.extend(
+                [
+                    ("current_14d_promoted_ad_orders", "14天本 SKU 单", compact_number),
+                    ("current_14d_acos", "14天 ACOS", compact_percent),
+                    ("current_14d_tacos", "14天 TACOS", compact_percent),
+                    ("current_14d_total_orders", "14天总单", compact_number),
+                    ("current_14d_available_stock", "14天库存", compact_number),
+                ]
+            )
+        for field, label, formatter in field_labels:
+            value = formatter(row.get(field))
+            if value:
+                metrics.append(f"{label} {value}")
+        return "；".join(metrics)
+
+    all_ad_queue_rows = all_search + shared._scale_keywords_as_ad_queue_rows(all_scale_keywords) + all_growth_tests
+    counters = shared._collect_report_counters(all_tasks, all_ad_queue_rows, all_reviews, quality_rows, all_listing_reviews)
     non_cost_tasks = [row for row in all_tasks if row.get("action_group") != "成本 / 利润动作"]
     cost_rows = [
         row
@@ -140,10 +346,10 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
     pending_p1_rows = [row for row in executable_pending_tasks if row.get("priority") == "P1"]
     pending_ad_rows = [
         row
-        for row in all_search
-        if not is_done(row) and str(row.get("copy_action_line") or "") in shared.ACTIONABLE_COPY_LINES
+        for row in all_ad_queue_rows
+        if not is_done(row) and shared._ad_status_key(row) == "pending"
     ]
-    executed_rows = [row for row in [*all_tasks, *all_search] if is_done(row)]
+    executed_rows = [row for row in [*all_tasks, *all_ad_queue_rows] if is_done(row)]
 
     if pending_p0_rows:
         lead = pending_p0_rows[0]
@@ -155,7 +361,7 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         card = matching_product_card(lead)
         conclusion = f"今天没有新的 P0，先查 {item_title(lead)}。{summary_risk_brief(lead, card)}；先补关键证据，再决定是否放量。"
     elif pending_ad_rows:
-        conclusion = "今天先做广告止损。产品级没有明确放量条件，优先处理有证据的降竞价、否词和暂停项。"
+        conclusion = "今天先处理广告后台待执行项。先核对产品卡允许范围，只复制待确认动作。"
     elif executed_rows:
         conclusion = "今天先看复盘。已执行对象仍在 3 天或 7 天观察窗口，先看结果，避免重复改同一批动作。"
     else:
@@ -194,15 +400,16 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         )
     keyword_wait_rows = [
         row for row in all_keyword_action_effect_reviews
-        if str(row.get("review_window") or "") == "未满3天" or str(row.get("judgement") or "") == "样本不足"
+        if str(row.get("review_window") or "") == "未满3天"
+        or review_display_judgement(row) in {"样本不足", "本 SKU 未验证", "待人工复查"}
     ]
     for row in keyword_wait_rows[: max(0, 3 - len(dont_do_items))]:
         target = str(row.get("search_term_or_target") or item_title(row) or "N/A")
         dont_do_items.append(
             summary_item(
                 f"{str(row.get('marketplace') or '').upper()}｜{target}",
-                row.get("judgement") or row.get("review_window") or "样本不足",
-                "今天先别重复加码，等窗口够了再判断。",
+                review_display_judgement(row) or row.get("review_window") or "样本不足",
+                review_display_next_step(row) if review_display_judgement(row) in {"本 SKU 未验证", "待人工复查"} else "今天先别重复加码，等窗口够了再判断。",
             )
         )
     observation_rows = [row for row in all_tasks if not is_done(row) and shared._is_observation_only_summary_row(row)]
@@ -230,16 +437,26 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         )
 
     def review_value_score(row: dict[str, str]) -> tuple[int, int, int, str]:
-        judgement = str(row.get("judgement") or "")
-        next_step = str(row.get("next_step") or "")
+        judgement = review_display_judgement(row)
+        next_step = review_display_next_step(row)
         window = str(row.get("review_window") or "")
         product = str(row.get("product_name") or row.get("search_term_or_target") or "")
+        halo_only = review_flag(row, "halo_only_conversion")
+        target_not_converted = review_flag(row, "target_sku_not_converted")
         score = 0
+        if halo_only or target_not_converted or judgement in {"本 SKU 未验证", "待人工复查"}:
+            score += 8
         if judgement in {"暂未改善", "初步有效", "有改善迹象"}:
             score += 5
         if judgement in {"待7天确认", "待人工判定有效/无效"}:
             score += 4
-        if "不要继续加价" in next_step or "回到原竞价" in next_step or "保留当前竞价" in next_step:
+        if (
+            "不要继续加价" in next_step
+            or "不追加预算" in next_step
+            or "不追加竞价" in next_step
+            or "回到原竞价" in next_step
+            or "保留当前竞价" in next_step
+        ):
             score += 4
         if "优先要求补竞品/页面证据" in next_step or "确认是否否词匹配类型" in next_step:
             score += 3
@@ -253,9 +470,16 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
     for row in review_candidates[:3]:
         label_target = str(row.get("search_term_or_target") or row.get("product_name") or "N/A")
         title = f"{str(row.get('marketplace') or '').upper()}｜{label_target}"
-        reason = f"{row.get('review_window') or row.get('judgement') or '待复查'}｜{clean_text(row.get('effect_metrics') or '', 72)}"
-        action = row.get("next_step") or "继续观察，等待足够样本。"
-        review_watch_items.append(summary_item(title, reason, action, str(row.get("judgement") or "")))
+        metrics = review_metric_brief(row)
+        judgement = review_display_judgement(row)
+        reason_parts = [str(row.get("review_window") or judgement or "待复查")]
+        if metrics:
+            reason_parts.append(metrics)
+        else:
+            reason_parts.append(clean_text(row.get("effect_metrics") or "", 72))
+        reason = "｜".join(part for part in reason_parts if str(part).strip())
+        action = review_display_next_step(row)
+        review_watch_items.append(summary_item(title, reason, action, judgement, reason_limit=180))
 
     def inventory_priority(row: dict[str, str]) -> tuple[int, float, float, str]:
         status = str(row.get("stock_status_label") or "")
@@ -348,6 +572,29 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
     p0_card_class = "metric-card status-danger" if counters["p0"] else "metric-card"
     p1_card_class = "metric-card status-warn" if counters["p1"] else "metric-card"
     cost_card_class = "metric-card status-warn" if counters["cost"] else "metric-card"
+    _apply_product_card_coverage_fallback(frontend_coverage_totals, all_product_cards)
+    frontend_total = frontend_coverage_totals["frontend_queue_total"]
+    frontend_coverage_summary: dict[str, object] = {}
+    if frontend_total:
+        market_survey_average = round(market_survey_score_total / frontend_total, 1)
+        frontend_coverage_summary = {
+            **frontend_coverage_totals,
+            "market_survey_average_score": market_survey_average,
+            "market_survey_average_score_label": f"{market_survey_average}/100",
+            "market_survey_complete_label": f'{frontend_coverage_totals["market_survey_complete_count"]}/{frontend_total}',
+            "market_survey_usable_label": f'{frontend_coverage_totals["market_survey_usable_count"]}/{frontend_total}',
+            "market_survey_insufficient_label": f'{frontend_coverage_totals["market_survey_insufficient_count"]}/{frontend_total}',
+            "market_survey_failed_label": f'{frontend_coverage_totals["market_survey_failed_count"]}/{frontend_total}',
+            "frontend_live_success_rate": frontend_coverage_totals["frontend_live_success_count"] / frontend_total,
+            "frontend_search_observed_rate": (
+                (
+                    frontend_coverage_totals["frontend_search_success_count"]
+                    + frontend_coverage_totals["frontend_search_partial_count"]
+                )
+                / frontend_total
+            ),
+        }
+    frontend_coverage_strip = shared._render_frontend_coverage_strip(frontend_coverage_summary)
     body = [
         '<div class="report-card hero">',
         "<div>",
@@ -365,6 +612,13 @@ def write_summary_html(shared: Any, results: list[dict], output_path: Path, repo
         f'<div class="metric-card status-pass">已执行待复盘<strong>{counters["executed"]}</strong></div>',
         f'<div class="{cost_card_class}">成本/利润核对<strong>{counters["cost"]}</strong></div>',
         "</div></section>",
+        (
+            '<section class="section-card"><h2>前台证据覆盖</h2>'
+            + frontend_coverage_strip
+            + "</section>"
+            if frontend_coverage_strip
+            else ""
+        ),
         '<section class="section-card"><h2>今天先做</h2>',
         '<div class="summary-list">' + "".join(today_do_items) + "</div>" if today_do_items else '<p class="subtle">当前没有新的强动作，优先看下方复盘和观察。</p>',
         "</section>",

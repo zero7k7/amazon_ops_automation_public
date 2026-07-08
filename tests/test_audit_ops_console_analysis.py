@@ -70,7 +70,7 @@ def _write_case(tmp_path: Path, view: dict, html: str | None = None) -> Path:
     (tmp_path / "latest_analysis.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     (tmp_path / "latest_recommendations.html").write_text(
         html
-        or "上传并刷新日报 手动运行 daily update 前台证据状态 产品级结论 补货提醒 执行后效果复盘",
+        or "上传并刷新日报 市场调查 产品级结论 补货提醒 执行后效果复盘",
         encoding="utf-8",
     )
     _write_required_report_pages(tmp_path)
@@ -98,20 +98,20 @@ def _write_required_report_pages(tmp_path: Path) -> None:
 
 def _latest_html(extra: str = "") -> str:
     return (
-        '上传并刷新日报 手动运行 daily update 前台证据状态 产品级结论 补货提醒 执行后效果复盘 '
-        'today-ad-actions-all local-data-submit data-local-submit-form data-run-daily-update '
+        '上传并刷新日报 市场调查 产品级结论 补货提醒 执行后效果复盘 '
+        'today-ad-actions-all local-data-submit data-local-submit-form '
         'data-run-report-action="frontend-retry" data-local-submit-status data-config-submit-form '
         'data-apply-config="cost" data-apply-config="alias" data-config-submit-status '
-        'data-ad-search data-ad-status data-ad-action 20次稳定性只用于验收测试 '
+        'data-ad-search data-ad-status data-ad-action 刷新调查队列 缓存可参考，强操作只看完整证据 '
         f"{extra}"
     )
 
 
 def _marketplace_html(marketplace: str) -> str:
     return (
-        f"亚马逊运营日报｜{marketplace} 广告状态 前台证据状态 执行后效果复盘 "
-        '库存补货提醒 数据质量与增强数据 刷新当前前台队列 data-run-report-action="frontend-retry" '
-        'data-run-report-status="frontend-retry" 失败时保留缓存 判断硬标准'
+        f"亚马逊运营日报｜{marketplace} 广告状态 市场调查 执行后效果复盘 "
+        '库存补货提醒 数据质量与增强数据 刷新调查队列 data-run-report-action="frontend-retry" '
+        'data-run-report-status="frontend-retry" 缓存可参考，强操作只看完整证据 判断硬标准'
     )
 
 
@@ -162,7 +162,7 @@ def _patch_source_contracts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
                 "SIDE_EFFECT_POST_PATHS",
                 "上传完成，preflight 通过。",
                 "已开始导入 inbox 并刷新报告。",
-                "已开始当前前台队列缺口刷新",
+                "已开始市场调查",
                 "正在检查这个产品的前台，完成后会刷新报告。",
                 "成本配置应用必须显式确认。",
             ]
@@ -218,7 +218,7 @@ def test_audit_fails_sample_light_zero_order_scale_action(tmp_path) -> None:
             "marketplace": "UK",
             "sku": "SKU-AD",
             "asin": "B0AD",
-            "search_term_or_target": "led desk lamp",
+            "search_term_or_target": "metal board",
             "suggested_action": "加价 5%-10%",
             "classification_reason": "相关但未验证",
             "reason": "小样本无成交",

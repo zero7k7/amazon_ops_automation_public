@@ -424,7 +424,7 @@ def _audit_server_contract(failures: list[str]) -> None:
         "SIDE_EFFECT_POST_PATHS",
         "上传完成，preflight 通过。",
         "已开始导入 inbox 并刷新报告。",
-        "已开始当前前台队列缺口刷新",
+        "已开始市场调查",
         "正在检查这个产品的前台，完成后会刷新报告。",
         "成本配置应用必须显式确认。",
     ]
@@ -440,15 +440,13 @@ def _audit_server_contract(failures: list[str]) -> None:
 def _audit_latest_recommendations_html(html: str, failures: list[str]) -> None:
     markers = [
         "上传并刷新日报",
-        "手动运行 daily update",
-        "前台证据状态",
+        "市场调查",
         "产品级结论",
         "补货提醒",
         "执行后效果复盘",
         "today-ad-actions-all",
         "local-data-submit",
         "data-local-submit-form",
-        "data-run-daily-update",
         "data-run-report-action=\"frontend-retry\"",
         "data-local-submit-status",
         "data-config-submit-form",
@@ -460,10 +458,12 @@ def _audit_latest_recommendations_html(html: str, failures: list[str]) -> None:
         "data-ad-action",
     ]
     _require_markers("latest_recommendations.html", html, markers, failures)
+    if "手动运行 daily update" in html or "data-run-daily-update" in html:
+        failures.append("latest_recommendations.html still exposes manual daily update button")
     if "上传并检查" in html or "上传后先看 preflight 结果，再运行 daily update" in html:
         failures.append("latest_recommendations.html still uses old upload wording")
-    if "20次稳定性只用于验收测试" not in html:
-        failures.append("latest_recommendations.html missing frontend stability scope wording")
+    if "刷新调查队列" not in html or "缓存可参考，强操作只看完整证据" not in html:
+        failures.append("latest_recommendations.html missing market survey refresh scope wording")
 
 
 def _audit_summary_html(html: str, failures: list[str]) -> None:
@@ -479,7 +479,7 @@ def _audit_summary_html(html: str, failures: list[str]) -> None:
     _require_markers("summary.html", html, markers, failures)
     if not any(token in html for token in ["完整库存表在 ALL 工作台和 Excel", "可用库存", "覆盖", "建议补"]):
         failures.append("summary.html replenishment section lacks inventory evidence or fallback text")
-    if "前台证据状态" in html or "复制到广告后台" in html:
+    if "复制到广告后台" in html:
         failures.append("summary.html duplicates workbench-only operational details")
 
 
@@ -507,14 +507,14 @@ def _audit_marketplace_html(output_dir: Path, failures: list[str]) -> None:
         "de_report.html": "DE",
     }
     common_markers = [
-        "前台证据状态",
+        "市场调查",
         "执行后效果复盘",
         "库存补货提醒",
         "数据质量与增强数据",
-        "刷新当前前台队列",
+        "刷新调查队列",
         "data-run-report-action=\"frontend-retry\"",
         "data-run-report-status=\"frontend-retry\"",
-        "失败时保留缓存",
+        "缓存可参考，强操作只看完整证据",
         "判断硬标准",
     ]
     for filename, marketplace in required_by_marketplace.items():

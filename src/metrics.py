@@ -78,6 +78,8 @@ class HistoricalViews:
     product_windows: dict[int, pd.DataFrame]
     campaign_windows: dict[int, pd.DataFrame]
     search_term_windows: dict[int, pd.DataFrame]
+    product_history: pd.DataFrame
+    search_term_history: pd.DataFrame
     data_days: int
 
 
@@ -132,5 +134,7 @@ def build_windowed_views(
         product_windows=product_views,
         campaign_windows=campaign_views,
         search_term_windows=search_term_views,
+        product_history=product_history,
+        search_term_history=search_term_history,
         data_days=data_days,
     )

@@ -98,7 +98,29 @@ def write_marketplace_report_html(shared: Any, result: dict, output_path: Path, 
                 collapsed=True,
             )
         )
+    frontend_coverage_strip = shared._render_frontend_coverage_strip(view.get("frontend_coverage_summary", {}))
+    if frontend_coverage_strip:
+        sections.append(
+            '<section class="section-card">'
+            '<div class="ad-section-header"><h2>前台证据覆盖</h2><span class="status-badge status-muted">证据口径</span></div>'
+            f"{frontend_coverage_strip}"
+            "</section>"
+        )
+    sections.append(
+        shared._render_product_operation_cards(
+            view.get("product_operation_cards", []),
+            view.get("frontend_coverage_summary", {}),
+            limit=6,
+        )
+    )
     sections.append(shared._render_frontend_status_summary(view.get("frontend_check_queue_rows", [])))
+    sections.append(
+        shared._render_collapsed_section(
+            "产品广告门禁",
+            shared._render_product_final_decision_cards(view.get("product_final_decision_rows", []), limit=6),
+            "这里保留产品级放行和拦截原因明细，避免单站报告漏看前台门禁。",
+        )
+    )
 
     if view["today_task_queue_rows"]:
         non_cost_rows = [row for row in view["today_task_queue_rows"] if row.get("action_group") != "成本 / 利润动作"]
@@ -151,17 +173,6 @@ def write_marketplace_report_html(shared: Any, result: dict, output_path: Path, 
                 "已执行对象只在复查时展开。",
             )
         )
-    visible_listing_rows = shared._filter_listing_rows_for_p0(listing_rows, view.get("today_task_queue_rows", []))
-    if visible_listing_rows:
-        sections.append(
-            shared._render_collapsed_section(
-                "Listing 待人工确认",
-                shared._render_collapsed_block("通用确认材料", shared._render_common_chatgpt_materials(), "需要人工确认 Listing/价格时再展开。")
-                + shared._render_listing_review_cards(visible_listing_rows, limit=5, frontend_lookup=frontend_lookup),
-                "Listing 证据默认下沉，避免抢占今天执行入口。",
-            )
-        )
-
     if view["tomorrow_review_rows"]:
         sections.append(
             shared._render_collapsed_section(

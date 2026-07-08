@@ -1,28 +1,13 @@
 ﻿from __future__ import annotations
 
 import argparse
-import sys
-
-
-def _configure_console_encoding() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is None:
-            continue
-        try:
-            reconfigure(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            continue
-
-
-_configure_console_encoding()
-
 print("[BOOT] main.py started", flush=True)
 import csv
 import json
 import os
 import re
 import shutil
+import sys
 import time
 import urllib.parse
 from datetime import datetime
@@ -86,6 +71,7 @@ ARCHIVE_ADS_DIR = ROOT / "data" / "archive" / "ads"
 ARCHIVE_ERP_DIR = ROOT / "data" / "archive" / "erp"
 CUSTOM_DATA_DIR = ROOT / "data" / "raw_amazon_custom"
 SUPPORTED_MARKETPLACES = ["UK", "US", "DE"]
+DEBUG_TIMING_EXIT_CODE = 2
 
 
 def _log_step(step: str, elapsed_sec: float) -> None:
@@ -137,14 +123,37 @@ def _print_report_entrypoints(report_path: Path, output_dir: Path = OUTPUT_DIR) 
     print(str(import_manifest.resolve()), flush=True)
 
 
-def _write_autoopt_outputs(results: list[dict], output_dir: Path, fallback_report_date: str | None = None) -> dict[str, Path]:
+def _write_autoopt_outputs(results: list[dict], output_dir: Path, fallback_report_date: str | None = None) -> dict[str, object]:
     payload = build_autoopt_payload(results, output_dir=output_dir)
     report_date = str(payload.get("report_date") or fallback_report_date or datetime.now().date().isoformat())
     json_path, xlsx_path = write_autoopt_outputs(output_dir, report_date, payload)
     return {
         "autoopt_json_path": json_path,
         "autoopt_xlsx_path": xlsx_path,
+        "autoopt_payload": payload,
     }
+
+
+def _inject_current_autoopt_reviews(results: list[dict], autoopt_payload: dict[str, object]) -> None:
+    action_rows = [
+        row for row in autoopt_payload.get("action_review_rows", []) if isinstance(row, dict)
+    ]
+    keyword_rows = [
+        row for row in autoopt_payload.get("keyword_action_review_rows", []) if isinstance(row, dict)
+    ]
+    for result in results:
+        marketplace = str(result.get("marketplace") or "").strip().upper()
+        if not marketplace:
+            continue
+        report_view = result.get("report_view")
+        if not isinstance(report_view, dict):
+            continue
+        report_view["action_effect_review_rows"] = [
+            row for row in action_rows if str(row.get("marketplace") or "").strip().upper() == marketplace
+        ]
+        report_view["keyword_action_effect_review_rows"] = [
+            row for row in keyword_rows if str(row.get("marketplace") or "").strip().upper() == marketplace
+        ]
 
 
 def _debug_read_enhanced_headers(custom_dir: Path, marketplace: str) -> tuple[float, float]:
@@ -213,8 +222,8 @@ def ensure_ignored_issues_config() -> None:
         return
     frame = pd.DataFrame(
         [
-            {"marketplace": "UK", "asin": "B0DEMOIGN1", "reason": "demo ignored issue"},
-            {"marketplace": "UK", "asin": "B0DEMOIGN2", "reason": "demo ignored issue"},
+            {"marketplace": "UK", "asin": "B0D5D1H28J", "reason": "鐢ㄦ埛纭蹇界暐"},
+            {"marketplace": "UK", "asin": "B0DBVJH8KW", "reason": "鐢ㄦ埛纭蹇界暐"},
         ]
     )
     frame.to_excel(IGNORED_ISSUES_PATH, index=False)
@@ -230,6 +239,23 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _review_snapshot_rows(rows: object) -> list[object]:
+    if not isinstance(rows, list):
+        return []
+    normalized: list[object] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            normalized.append(row)
+            continue
+        item = dict(row)
+        if not str(item.get("effect_metrics") or "").strip():
+            metric_text = str(item.get("effect_evidence") or item.get("review_status") or "").strip()
+            if metric_text:
+                item["effect_metrics"] = metric_text
+        normalized.append(item)
+    return normalized
+
+
 def _report_view_snapshot(view: dict) -> dict:
     keys = [
         "analysis_status",
@@ -242,6 +268,7 @@ def _report_view_snapshot(view: dict) -> dict:
         "html_search_term_processing_queue_rows",
         "scale_rows",
         "scale_keyword_rows",
+        "growth_test_rows",
         "listing_price_diagnosis_rows",
         "frontend_check_queue_rows",
         "inventory_replenishment_rows",
@@ -265,7 +292,147 @@ def _report_view_snapshot(view: dict) -> dict:
     snapshot["final_decision_summary"] = view.get("final_decision_summary", {})
     snapshot["decision_gate_counts"] = view.get("decision_gate_counts", {})
     snapshot["frontend_coverage_summary"] = view.get("frontend_coverage_summary", {})
+    snapshot["action_effect_review_rows"] = _review_snapshot_rows(snapshot.get("action_effect_review_rows"))
+    snapshot["keyword_action_effect_review_rows"] = _review_snapshot_rows(snapshot.get("keyword_action_effect_review_rows"))
     return snapshot
+
+
+def _aggregate_frontend_coverage(results: list[dict]) -> dict[str, object]:
+    count_fields = [
+        "frontend_queue_total",
+        "frontend_usable_evidence_count",
+        "frontend_decision_ready_count",
+        "frontend_reference_evidence_count",
+        "frontend_live_success_count",
+        "frontend_cached_count",
+        "frontend_pending_or_stale_count",
+        "frontend_search_success_count",
+        "frontend_search_partial_count",
+        "frontend_product_page_success_count",
+        "frontend_competitor_search_success_count",
+        "frontend_own_sellersprite_count",
+        "frontend_own_sellersprite_today_count",
+        "frontend_own_sellersprite_cache_count",
+        "frontend_own_sellersprite_pending_count",
+        "frontend_own_sellersprite_failed_count",
+        "frontend_sellersprite_trend_ready_count",
+        "frontend_competitor_discovery_count",
+        "frontend_competitor_pool_count",
+        "frontend_competitor_pool_today_count",
+        "frontend_competitor_pool_cache_count",
+        "frontend_competitor_pool_pending_count",
+        "frontend_competitor_pool_failed_count",
+        "frontend_competitor_sellersprite_count",
+        "frontend_competitor_sellersprite_today_count",
+        "frontend_competitor_sellersprite_cache_count",
+        "frontend_competitor_sellersprite_pending_count",
+        "frontend_competitor_sellersprite_asin_count",
+        "frontend_amazon_search_validation_count",
+        "frontend_scalable_strong_count",
+        "frontend_weak_defensive_count",
+        "frontend_insufficient_count",
+        "frontend_strong_evidence_count",
+        "frontend_background_evidence_count",
+        "frontend_unusable_evidence_count",
+        "market_survey_complete_count",
+        "market_survey_usable_count",
+        "market_survey_insufficient_count",
+        "market_survey_failed_count",
+    ]
+    totals = {field: 0 for field in count_fields}
+    market_survey_score_total = 0.0
+    for result in results:
+        coverage = (result.get("report_view") or {}).get("frontend_coverage_summary", {})
+        if not isinstance(coverage, dict):
+            continue
+        queue_total = int(float(coverage.get("frontend_queue_total", 0) or 0))
+        market_survey_score_total += float(coverage.get("market_survey_average_score", 0) or 0) * queue_total
+        for field in count_fields:
+            try:
+                totals[field] += int(float(coverage.get(field, 0) or 0))
+            except (TypeError, ValueError):
+                continue
+    total = totals["frontend_queue_total"]
+    usable = totals["frontend_usable_evidence_count"]
+    strong = totals["frontend_decision_ready_count"]
+    background = totals["frontend_reference_evidence_count"]
+    live = totals["frontend_live_success_count"]
+    search_success = totals["frontend_search_success_count"]
+    search_partial = totals["frontend_search_partial_count"]
+    product_success = totals["frontend_product_page_success_count"] or live
+    competitor_search = totals["frontend_competitor_search_success_count"] or search_success
+    own_sellersprite = totals["frontend_own_sellersprite_count"]
+    own_sellersprite_today = totals["frontend_own_sellersprite_today_count"]
+    own_sellersprite_cache = totals["frontend_own_sellersprite_cache_count"]
+    sellersprite_trend_ready = totals["frontend_sellersprite_trend_ready_count"]
+    competitor_discovery = totals["frontend_competitor_discovery_count"]
+    competitor_pool = totals["frontend_competitor_pool_count"]
+    competitor_pool_today = totals["frontend_competitor_pool_today_count"]
+    competitor_pool_cache = totals["frontend_competitor_pool_cache_count"]
+    competitor_sellersprite = totals["frontend_competitor_sellersprite_count"]
+    competitor_sellersprite_today = totals["frontend_competitor_sellersprite_today_count"]
+    competitor_sellersprite_cache = totals["frontend_competitor_sellersprite_cache_count"]
+    competitor_sellersprite_asins = totals["frontend_competitor_sellersprite_asin_count"]
+    amazon_validation = totals["frontend_amazon_search_validation_count"] or competitor_search
+    scalable = totals["frontend_scalable_strong_count"]
+    weak = totals["frontend_weak_defensive_count"]
+    insufficient = totals["frontend_insufficient_count"]
+    market_complete = totals["market_survey_complete_count"]
+    market_usable = totals["market_survey_usable_count"]
+    market_insufficient = totals["market_survey_insufficient_count"]
+    market_failed = totals["market_survey_failed_count"]
+    market_average = round(market_survey_score_total / total, 1) if total else 0
+    return {
+        **totals,
+        "frontend_product_page_success_count": product_success,
+        "frontend_competitor_search_success_count": competitor_search,
+        "frontend_amazon_search_validation_count": amazon_validation,
+        "market_survey_average_score": market_average,
+        "frontend_usable_evidence_rate": (usable / total) if total else 0,
+        "frontend_decision_ready_rate": (strong / total) if total else 0,
+        "frontend_reference_evidence_rate": (background / total) if total else 0,
+        "frontend_live_success_rate": (live / total) if total else 0,
+        "frontend_search_success_rate": (search_success / total) if total else 0,
+        "frontend_search_observed_rate": ((search_success + search_partial) / total) if total else 0,
+        "frontend_product_page_success_label": f"{product_success}/{total}" if total else "无前台队列",
+        "frontend_competitor_search_success_label": f"{competitor_search}/{total}" if total else "无前台队列",
+        "frontend_own_sellersprite_label": f"{own_sellersprite}/{total}" if total else "无前台队列",
+        "frontend_own_sellersprite_today_label": (
+            f"今日 {own_sellersprite_today}/{total}，缓存 {own_sellersprite_cache}/{total}"
+            if total
+            else "无前台队列"
+        ),
+        "frontend_sellersprite_trend_ready_label": f"{sellersprite_trend_ready}/{total}" if total else "无前台队列",
+        "frontend_competitor_discovery_label": f"{competitor_discovery}/{total}" if total else "无前台队列",
+        "frontend_competitor_pool_label": f"{competitor_pool}/{total}" if total else "无前台队列",
+        "frontend_competitor_pool_freshness_label": (
+            f"今日 {competitor_pool_today}/{total}，7天缓存 {competitor_pool_cache}/{total}"
+            if total
+            else "无前台队列"
+        ),
+        "frontend_competitor_sellersprite_label": (
+            f"{competitor_sellersprite}/{total}，{competitor_sellersprite_asins} ASIN"
+            if total
+            else "无前台队列"
+        ),
+        "frontend_competitor_sellersprite_freshness_label": (
+            f"今日 {competitor_sellersprite_today}/{total}，缓存 {competitor_sellersprite_cache}/{total}"
+            if total
+            else "无前台队列"
+        ),
+        "frontend_amazon_search_validation_label": f"{amazon_validation}/{total}" if total else "无前台队列",
+        "frontend_scalable_strong_label": f"{scalable}/{total}" if total else "无前台队列",
+        "frontend_weak_defensive_label": f"{weak}/{total}" if total else "无前台队列",
+        "frontend_insufficient_label": f"{insufficient}/{total}" if total else "无前台队列",
+        "frontend_decision_ready_label": f"{strong}/{total} 强证据，{strong / total:.0%}" if total else "无前台队列",
+        "frontend_reference_evidence_label": f"{background}/{total} 背景参考，{background / total:.0%}" if total else "无前台队列",
+        "frontend_coverage_label": f"{usable}/{total} 可用，{usable / total:.0%}" if total else "无前台队列",
+        "market_survey_complete_label": f"{market_complete}/{total}" if total else "无市场调查队列",
+        "market_survey_usable_label": f"{market_usable}/{total}" if total else "无市场调查队列",
+        "market_survey_insufficient_label": f"{market_insufficient}/{total}" if total else "无市场调查队列",
+        "market_survey_failed_label": f"{market_failed}/{total}" if total else "无市场调查队列",
+        "market_survey_average_score_label": f"{market_average}/100" if total else "无市场调查队列",
+    }
 
 
 def archive_raw_file(source_path: Path, archive_dir: Path, prefix: str) -> Path:
@@ -789,6 +956,10 @@ def _write_all_mode_outputs(
     report_date = next((result["summary"]["report_date"] for result in results if result["summary"].get("report_date")), None)
     report_date = report_date or datetime.now().date().isoformat()
     annotate_task_history(results, output_dir, report_date)
+    autoopt_paths = _write_autoopt_outputs(results, output_dir, fallback_report_date=report_date)
+    autoopt_payload = autoopt_paths.get("autoopt_payload")
+    if isinstance(autoopt_payload, dict):
+        _inject_current_autoopt_reviews(results, autoopt_payload)
     recommendations_md = build_all_marketplace_markdown(results, report_date)
     marketplace_summary_md = build_marketplace_summary_markdown(results, report_date)
     enhanced_requests_md = build_all_enhanced_requests_markdown(results, report_date)
@@ -796,10 +967,12 @@ def _write_all_mode_outputs(
     combined_requests = []
     combined_inventory_rows = []
     combined_product_final_decisions = []
+    combined_product_operation_cards = []
     for result in results:
         combined_requests.extend(result.get("analysis_payload", {}).get("enhanced_data_requests", []))
         combined_inventory_rows.extend(result.get("analysis_payload", {}).get("inventory_replenishment", {}).get("rows", []))
         combined_product_final_decisions.extend(result.get("report_view", {}).get("product_final_decision_rows", []))
+        combined_product_operation_cards.extend(result.get("report_view", {}).get("product_operation_cards", []))
 
     combined_payload = {
         "report_date": report_date,
@@ -826,6 +999,7 @@ def _write_all_mode_outputs(
         "enhanced_data_requests": combined_requests,
         "inventory_replenishment_rows": combined_inventory_rows,
         "product_final_decision_rows": combined_product_final_decisions,
+        "product_operation_cards": combined_product_operation_cards,
         "final_decision_summary": {
             str(result.get("marketplace") or "N/A"): (result.get("report_view", {}) or {}).get("final_decision_summary", {})
             for result in results
@@ -834,6 +1008,7 @@ def _write_all_mode_outputs(
             str(result.get("marketplace") or "N/A"): (result.get("report_view", {}) or {}).get("decision_gate_counts", {})
             for result in results
         },
+        "frontend_coverage_summary": _aggregate_frontend_coverage(results),
     }
 
     recommendations_path = output_dir / "latest_recommendations.md"
@@ -848,11 +1023,17 @@ def _write_all_mode_outputs(
     enhanced_requests_md_path = output_dir / "enhanced_data_requests.md"
     enhanced_requests_xlsx_path = output_dir / "enhanced_data_requests.xlsx"
     marketplace_summary_path = output_dir / "marketplace_summary.md"
+    snapshot_results = [
+        {
+            **result,
+            "report_view": combined_result.get("report_view_snapshot", {}),
+        }
+        for result, combined_result in zip(results, combined_payload["marketplace_results"])
+    ]
 
-    autoopt_paths = _write_autoopt_outputs(results, output_dir, fallback_report_date=report_date)
     write_text(recommendations_path, recommendations_md)
-    write_dashboard_html(results, dashboard_path, report_date)
-    write_summary_html(results, summary_html_path, report_date)
+    write_dashboard_html(snapshot_results, dashboard_path, report_date)
+    write_summary_html(snapshot_results, summary_html_path, report_date)
     write_marketplace_report_html(next(result for result in results if result["marketplace"] == "UK"), uk_report_path, report_date)
     write_marketplace_report_html(next(result for result in results if result["marketplace"] == "US"), us_report_path, report_date)
     write_marketplace_report_html(next(result for result in results if result["marketplace"] == "DE"), de_report_path, report_date)
@@ -899,7 +1080,38 @@ def _safe_path(path: Path, safe_output_dir: Path) -> Path:
     return safe_output_dir / path.name
 
 
+def _formal_run_state_snapshot() -> dict[str, object]:
+    from scripts.run_daily_update import report_state_snapshot
+
+    return report_state_snapshot()
+
+
+def _restore_formal_run_state_snapshot(snapshot: dict[str, object]) -> list[str]:
+    from scripts.run_daily_update import restore_report_state_snapshot
+
+    return restore_report_state_snapshot(snapshot)
+
+
 def main() -> int:
+    formal_state_snapshot: dict[str, object] | None = None
+    if "--safe-run" not in sys.argv[1:]:
+        formal_state_snapshot = _formal_run_state_snapshot()
+    try:
+        code = _main_impl()
+    except Exception:
+        if formal_state_snapshot is not None:
+            failures = _restore_formal_run_state_snapshot(formal_state_snapshot)
+            for failure in failures:
+                print(f"[fail] formal state restore blocker: {failure}", flush=True)
+        raise
+    if formal_state_snapshot is not None and code != 0:
+        failures = _restore_formal_run_state_snapshot(formal_state_snapshot)
+        for failure in failures:
+            print(f"[fail] formal state restore blocker: {failure}", flush=True)
+    return code
+
+
+def _main_impl() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--marketplace", dest="marketplace", default="UK")
     parser.add_argument("--debug-timing", action="store_true")
@@ -938,14 +1150,14 @@ def main() -> int:
     elapsed = _done("读取广告表", t)
     if args.debug_timing and elapsed > 60:
         _timeout_step("读取广告表")
-        return 0
+        return DEBUG_TIMING_EXIT_CODE
 
     t = _start("读取 ERP 表")
     erp_df, erp_source = load_erp_report(erp_source)
     elapsed = _done("读取 ERP 表", t)
     if args.debug_timing and elapsed > 60:
         _timeout_step("读取 ERP 表")
-        return 0
+        return DEBUG_TIMING_EXIT_CODE
     _apply_stale_file_warning(ads_df, erp_df, ads_source, erp_source)
 
     if args.debug_timing:
@@ -954,13 +1166,13 @@ def main() -> int:
         print(f"[DONE] 读取 traffic_sales 增强表: {traffic_elapsed:.3f}秒", flush=True)
         if traffic_elapsed > 60:
             _timeout_step("读取 traffic_sales 增强表")
-            return 0
+            return DEBUG_TIMING_EXIT_CODE
 
         print("[START] 读取 search_query_performance 增强表", flush=True)
         print(f"[DONE] 读取 search_query_performance 增强表: {query_elapsed:.3f}秒", flush=True)
         if query_elapsed > 60:
             _timeout_step("读取 search_query_performance 增强表")
-            return 0
+            return DEBUG_TIMING_EXIT_CODE
 
     ads_archive_prefix = (
         "ads_report_all"
@@ -985,7 +1197,7 @@ def main() -> int:
     merge_elapsed = _done("合并数据", t_merge_initial)
     if args.debug_timing and merge_elapsed > 60:
         _timeout_step("合并数据")
-        return 0
+        return DEBUG_TIMING_EXIT_CODE
 
     if args.debug_timing:
         print("[START] 生成 Excel", flush=True)
@@ -993,7 +1205,7 @@ def main() -> int:
         print("[START] 生成 HTML", flush=True)
         print("[DONE] 生成 HTML: 0.000秒", flush=True)
         print("[DEBUG_TIMING] 仅定位耗时，已跳过完整报告生成。", flush=True)
-        return 0
+        return DEBUG_TIMING_EXIT_CODE
     sku_map_df = pd.read_excel(active_sku_map_path)
     cost_config_df = pd.read_excel(COST_CONFIG_PATH, sheet_name="product_cost_config")
     alias_result = build_alias_review(
@@ -1021,11 +1233,9 @@ def main() -> int:
             "erp_overwrite_updated_rows": 0,
         }
     else:
-        import_stats = db.import_raw_frames(
+        import_stats = db.import_raw_and_daily_frames(
             ads_raw=prepare_ads_import_frame(ads_df, ads_source, ads_archive_path),
             erp_raw=prepare_erp_import_frame(erp_df, erp_source, erp_archive_path),
-        )
-        db.upsert_daily_frames(
             product_daily=initial_dataset.product_daily,
             campaign_daily=initial_dataset.campaign_daily,
             search_term_daily=initial_dataset.search_term_daily,

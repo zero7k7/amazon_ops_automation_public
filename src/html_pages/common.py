@@ -56,8 +56,6 @@ def _render_boss_summary(
     ]
     if show_p1_link:
         jump_links.append('<a href="#p1-check">P1 检查</a>')
-    if listing_count:
-        jump_links.append('<a href="#listing-review">P1 Listing 待确认</a>')
     return "\n".join(
         [
             '<section class="section-card"><h2>今日运营摘要</h2>',

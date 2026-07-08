@@ -26,12 +26,42 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
     frontend_coverage_totals = {
         "frontend_queue_total": 0,
         "frontend_usable_evidence_count": 0,
+        "frontend_decision_ready_count": 0,
+        "frontend_reference_evidence_count": 0,
         "frontend_live_success_count": 0,
         "frontend_cached_count": 0,
         "frontend_pending_or_stale_count": 0,
         "frontend_search_success_count": 0,
         "frontend_search_partial_count": 0,
+        "frontend_product_page_success_count": 0,
+        "frontend_competitor_search_success_count": 0,
+        "frontend_own_sellersprite_count": 0,
+        "frontend_own_sellersprite_today_count": 0,
+        "frontend_own_sellersprite_cache_count": 0,
+        "frontend_own_sellersprite_pending_count": 0,
+        "frontend_own_sellersprite_failed_count": 0,
+        "frontend_sellersprite_trend_ready_count": 0,
+        "frontend_competitor_discovery_count": 0,
+        "frontend_competitor_pool_count": 0,
+        "frontend_competitor_pool_today_count": 0,
+        "frontend_competitor_pool_cache_count": 0,
+        "frontend_competitor_pool_pending_count": 0,
+        "frontend_competitor_pool_failed_count": 0,
+        "frontend_competitor_sellersprite_count": 0,
+        "frontend_competitor_sellersprite_today_count": 0,
+        "frontend_competitor_sellersprite_cache_count": 0,
+        "frontend_competitor_sellersprite_pending_count": 0,
+        "frontend_competitor_sellersprite_asin_count": 0,
+        "frontend_amazon_search_validation_count": 0,
+        "frontend_scalable_strong_count": 0,
+        "frontend_weak_defensive_count": 0,
+        "frontend_insufficient_count": 0,
+        "market_survey_complete_count": 0,
+        "market_survey_usable_count": 0,
+        "market_survey_insufficient_count": 0,
+        "market_survey_failed_count": 0,
     }
+    market_survey_score_total = 0.0
     for result in results:
         if not result.get("has_data"):
             continue
@@ -51,6 +81,7 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
         if isinstance(coverage, dict):
             for key in frontend_coverage_totals:
                 frontend_coverage_totals[key] += int(float(coverage.get(key, 0) or 0))
+            market_survey_score_total += float(coverage.get("market_survey_average_score", 0) or 0) * int(float(coverage.get("frontend_queue_total", 0) or 0))
         for row in view.get("action_effect_review_rows", []):
             if row not in all_action_effect_reviews:
                 all_action_effect_reviews.append(row)
@@ -94,13 +125,14 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
     if total_hidden_low_click:
         optimization_notes.append(f"低点击观察对象合计 {total_hidden_low_click} 条已下沉到 Excel；主页只保留需要处理或留档的广告动作。")
     if has_listing_reviews:
-        optimization_notes.append("Listing 待人工确认保持差异化材料优先，通用材料固定在板块顶部，只展示一次。")
+        optimization_notes.append("Listing 待确认只保留计数和 Excel 明细，工作台不再展示通用材料块。")
     if unknown_or_stale_enhanced:
         optimization_notes.append(f"未知或陈旧周期增强数据 {unknown_or_stale_enhanced} 条仅作背景参考，不提升为强动作。")
     if not optimization_notes:
         optimization_notes.append("当前主页结构已收敛；若后续连续 2 天出现同类重复建议，可继续下调其主页优先级。")
 
-    counters = shared._collect_report_counters(all_tasks, all_search, all_review, quality_rows, all_listing_reviews)
+    all_ad_queue_rows = all_search + shared._scale_keywords_as_ad_queue_rows(all_scale_keywords) + all_growth_tests
+    counters = shared._collect_report_counters(all_tasks, all_ad_queue_rows, all_review, quality_rows, all_listing_reviews)
     review_count = counters["review"]
     quality_warn_count = counters["quality_warn"]
     cost_rows = [row for row in all_tasks if row.get("action_group") == "成本 / 利润动作"][:3]
@@ -112,17 +144,102 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
     p0_count = counters["p0"]
     listing_count = len(active_listing_reviews)
     p1_count = sum(1 for row in p1_non_listing_tasks if str(row.get("priority") or "") == "P1") + listing_count
-    all_ad_queue_rows = all_search + shared._scale_keywords_as_ad_queue_rows(all_scale_keywords)
     frontend_lookup = shared._build_frontend_lookup(all_frontend_checks)
     frontend_total = frontend_coverage_totals["frontend_queue_total"]
+    market_survey_average = round(market_survey_score_total / frontend_total, 1) if frontend_total else 0
     frontend_coverage_summary = {
         **frontend_coverage_totals,
         "frontend_usable_evidence_rate": (frontend_coverage_totals["frontend_usable_evidence_count"] / frontend_total) if frontend_total else 0,
+        "frontend_decision_ready_rate": (frontend_coverage_totals["frontend_decision_ready_count"] / frontend_total) if frontend_total else 0,
+        "frontend_reference_evidence_rate": (frontend_coverage_totals["frontend_reference_evidence_count"] / frontend_total) if frontend_total else 0,
         "frontend_live_success_rate": (frontend_coverage_totals["frontend_live_success_count"] / frontend_total) if frontend_total else 0,
         "frontend_search_success_rate": (frontend_coverage_totals["frontend_search_success_count"] / frontend_total) if frontend_total else 0,
         "frontend_search_observed_rate": ((frontend_coverage_totals["frontend_search_success_count"] + frontend_coverage_totals["frontend_search_partial_count"]) / frontend_total) if frontend_total else 0,
+        "market_survey_average_score": market_survey_average,
+        "market_survey_average_score_label": f"{market_survey_average}/100" if frontend_total else "无市场调查队列",
+        "market_survey_complete_label": (
+            f'{frontend_coverage_totals["market_survey_complete_count"]}/{frontend_total}'
+            if frontend_total
+            else "无市场调查队列"
+        ),
+        "market_survey_usable_label": (
+            f'{frontend_coverage_totals["market_survey_usable_count"]}/{frontend_total}'
+            if frontend_total
+            else "无市场调查队列"
+        ),
+        "market_survey_insufficient_label": (
+            f'{frontend_coverage_totals["market_survey_insufficient_count"]}/{frontend_total}'
+            if frontend_total
+            else "无市场调查队列"
+        ),
+        "market_survey_failed_label": (
+            f'{frontend_coverage_totals["market_survey_failed_count"]}/{frontend_total}'
+            if frontend_total
+            else "无市场调查队列"
+        ),
+        "frontend_decision_ready_label": (
+            f'{frontend_coverage_totals["frontend_decision_ready_count"]}/{frontend_total} 强证据，{frontend_coverage_totals["frontend_decision_ready_count"] / frontend_total:.0%}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_reference_evidence_label": (
+            f'{frontend_coverage_totals["frontend_reference_evidence_count"]}/{frontend_total} 背景参考，{frontend_coverage_totals["frontend_reference_evidence_count"] / frontend_total:.0%}'
+            if frontend_total
+            else "无前台队列"
+        ),
         "frontend_coverage_label": (
             f'{frontend_coverage_totals["frontend_usable_evidence_count"]}/{frontend_total} 可用，{frontend_coverage_totals["frontend_usable_evidence_count"] / frontend_total:.0%}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_product_page_success_label": (
+            f'{frontend_coverage_totals["frontend_product_page_success_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_competitor_search_success_label": (
+            f'{frontend_coverage_totals["frontend_competitor_search_success_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_own_sellersprite_label": (
+            f'{frontend_coverage_totals["frontend_own_sellersprite_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_competitor_discovery_label": (
+            f'{frontend_coverage_totals["frontend_competitor_discovery_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_competitor_pool_label": (
+            f'{frontend_coverage_totals["frontend_competitor_pool_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_competitor_sellersprite_label": (
+            f'{frontend_coverage_totals["frontend_competitor_sellersprite_count"]}/{frontend_total}，'
+            f'{frontend_coverage_totals["frontend_competitor_sellersprite_asin_count"]} ASIN'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_amazon_search_validation_label": (
+            f'{frontend_coverage_totals["frontend_amazon_search_validation_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_scalable_strong_label": (
+            f'{frontend_coverage_totals["frontend_scalable_strong_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_weak_defensive_label": (
+            f'{frontend_coverage_totals["frontend_weak_defensive_count"]}/{frontend_total}'
+            if frontend_total
+            else "无前台队列"
+        ),
+        "frontend_insufficient_label": (
+            f'{frontend_coverage_totals["frontend_insufficient_count"]}/{frontend_total}'
             if frontend_total
             else "无前台队列"
         ),
@@ -132,7 +249,7 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
         '<div class="report-card hero">',
         "<div>",
         f"<h1>亚马逊运营工作台｜{html.escape(report_date)}</h1>",
-        '<div class="hero-meta">先看产品级判断，再执行卡内广告止损动作。</div>',
+        '<div class="hero-meta">先看产品级判断，再执行卡内广告动作。</div>',
         shared._render_nav("recommendations"),
         "</div>",
         "</div>",
@@ -145,9 +262,10 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
             quality_warn_count,
             all_tasks,
             all_listing_reviews,
-            all_search,
+            all_ad_queue_rows,
             show_p1_link=bool(p1_non_listing_tasks),
         ),
+        shared._render_local_data_submit_tool(),
         shared._render_ad_action_banner(all_ad_queue_rows, anchor_id="today-ad-actions-all", hidden_low_click_count=total_hidden_low_click),
         shared._render_product_operation_cards(all_product_operation_cards or all_product_final_decisions, frontend_coverage_summary, limit=4),
         shared._render_collapsed_section(
@@ -178,7 +296,6 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
                 collapsed=True,
             )
         ),
-        shared._render_local_data_submit_tool(),
         shared._render_frontend_status_summary(all_frontend_checks),
         shared._render_collapsed_section(
             "已执行但仍需复查",
@@ -213,13 +330,6 @@ def write_recommendations_workbench_html(shared: Any, results: list[dict], outpu
             "产品广告门禁",
             shared._render_product_final_decision_cards(all_product_final_decisions, limit=6),
             "这里保留产品级放行和拦截原因明细，首屏产品判断卡给今日主结论。",
-        ),
-        shared._render_collapsed_section(
-            "Listing 待人工确认",
-            shared._render_collapsed_block("通用确认材料", shared._render_common_chatgpt_materials(), "需要人工确认 Listing/价格时再展开。")
-            + shared._render_listing_review_cards(shared._filter_listing_rows_for_p0(active_listing_reviews, all_tasks), limit=6, frontend_lookup=frontend_lookup),
-            "这类问题放到次级区，避免抢占今天执行入口。",
-            section_id="listing-review",
         ),
         shared._render_collapsed_section(
             "执行后效果复盘",

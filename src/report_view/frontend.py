@@ -36,20 +36,24 @@ def _frontend_location_note(shared: Any, row: dict[str, object]) -> str:
 
 def _frontend_location_scope(shared: Any, row: dict[str, object]) -> str:
     existing = str(row.get("frontend_location_scope") or "").strip()
-    if existing:
-        return existing
     text = _frontend_location_note(shared, row)
-    if not text:
-        return "missing"
     marketplace = str(row.get("marketplace") or "").strip().upper()
     lower = text.lower()
-    if "未确认" in text or "无法确认" in text:
+    if text:
+        if "未确认" in text or "无法确认" in text:
+            return "missing"
+        for marker in shared.WRONG_LOCATION_MARKERS.get(marketplace, ()):
+            if marker in lower:
+                return "wrong"
+    if existing:
+        return existing
+    if not text:
         return "missing"
-    if "已设置" in text and marketplace in text:
-        return "exact"
     for marker in shared.WRONG_LOCATION_MARKERS.get(marketplace, ()):
         if marker in lower:
             return "wrong"
+    if "已设置" in text and marketplace in text:
+        return "exact"
     for marker in shared.MARKETPLACE_LOCATION_MARKERS.get(marketplace, ()):
         if marker in lower:
             return "marketplace"
@@ -238,15 +242,24 @@ def _frontend_evidence_audit(shared: Any, row: dict[str, object]) -> dict[str, o
     search_status = str(row.get("frontend_search_status") or "")
     score = shared._to_float(row.get("frontend_evidence_quality_score")) or 0
     search_score = shared._to_float(row.get("frontend_search_quality_score")) or 0
-    competitor_count = int(shared._to_float(row.get("frontend_competitor_count")) or 0)
+    competitor_count = int(
+        shared._to_float(
+            row.get("frontend_competitor_count")
+            if row.get("frontend_competitor_count") not in (None, "")
+            else row.get("comparable_competitor_count")
+        )
+        or 0
+    )
+    comparable_competitor_count = shared._to_float(row.get("comparable_competitor_count"))
+    competitor_comparability = str(row.get("competitor_comparability") or "").strip().lower()
     warning = str(row.get("frontend_price_currency_warning") or "")
     location_scope = _frontend_location_scope(shared, row)
     location_warning = _frontend_location_warning(shared, row)
-    location_verified = shared.boolish_flag(row.get("frontend_location_verified")) or location_scope in {"exact", "marketplace"}
+    location_verified = shared.boolish_flag(row.get("frontend_location_verified"))
     location_exact = shared.boolish_flag(row.get("frontend_location_exact")) or location_scope == "exact"
     failure = str(row.get("frontend_failure_category") or "")
-    partial_search = bool(row.get("frontend_search_partial_evidence")) or search_status == "已读取部分结果"
-    cached = status.startswith("沿用")
+    partial_search = shared.boolish_flag(row.get("frontend_search_partial_evidence")) or search_status == "已读取部分结果"
+    cached = status.startswith("沿用") or shared.boolish_flag(row.get("frontend_cache_used"))
     live = status == "已自动检查"
     reasons: list[str] = []
     detail_parts: list[str] = []
@@ -266,6 +279,14 @@ def _frontend_evidence_audit(shared: Any, row: dict[str, object]) -> dict[str, o
         reasons.append("搜索页仅部分读取")
     if competitor_count and competitor_count < 2:
         reasons.append("可比竞品少于2个")
+    if not competitor_comparability:
+        reasons.append("竞品可比性未验证")
+    elif competitor_comparability in {"low", "unknown"}:
+        reasons.append("竞品可比性不足")
+    elif competitor_comparability != "high":
+        reasons.append("竞品可比性未达强诊断")
+    elif comparable_competitor_count is not None and comparable_competitor_count < 2:
+        reasons.append("可比竞品少于2个")
     if score and score < 55:
         reasons.append(f"证据质量偏低 {int(score)}")
     if search_status == "已自动检查":
@@ -282,29 +303,61 @@ def _frontend_evidence_audit(shared: Any, row: dict[str, object]) -> dict[str, o
     rating_delta = shared._to_float(row.get("frontend_rating_delta"))
     if rating_delta is not None:
         detail_parts.append(f"评分差 {rating_delta:+.1f}")
-    hard_location_problem = (status == "已自动检查" and not location_verified) or location_scope in {"wrong", "missing", "unknown"}
+    legacy_location_verified = location_verified or location_scope in {"exact", "marketplace"}
+    hard_location_problem = (status == "已自动检查" and not legacy_location_verified) or location_scope in {
+        "wrong",
+        "missing",
+        "unknown",
+    }
     if warning or hard_location_problem or (failure and failure != "none") or score <= 0:
-        tier = "不可用"
+        evidence_tier = "不可用"
         summary = "前台证据不可用于强诊断"
     elif live and location_exact and score >= 70 and search_status == "已自动检查" and competitor_count >= 2 and not partial_search:
-        tier = "强诊断可用"
+        evidence_tier = "强诊断可用"
         summary = "前台证据通过质量门"
     elif score >= 45:
-        tier = "仅背景参考"
+        evidence_tier = "仅背景参考"
         summary = "前台证据可辅助判断，不能单独放量"
     else:
-        tier = "不可用"
+        evidence_tier = "不可用"
         summary = "前台证据不足"
-    if not reasons and tier == "强诊断可用":
+    decision_strong = (
+        evidence_tier == "强诊断可用"
+        and live
+        and not cached
+        and not warning
+        and (not failure or failure == "none")
+        and location_verified
+        and location_exact
+        and score >= 75
+        and search_status == "已自动检查"
+        and competitor_count >= 2
+        and bool(competitor_comparability)
+        and competitor_comparability == "high"
+        and (comparable_competitor_count is None or comparable_competitor_count >= 2)
+        and not partial_search
+        and str(row.get("frontend_auto_conclusion") or "") == "FRONTEND_OK"
+    )
+    if evidence_tier == "不可用":
+        decision_tier = "不可用"
+    elif decision_strong:
+        decision_tier = "强诊断可用"
+    else:
+        decision_tier = "仅背景参考"
+    if not reasons and decision_tier == "强诊断可用":
         reasons.append("产品页和搜索页均可用")
-    elif not reasons and tier == "仅背景参考":
+    elif not reasons and decision_tier == "仅背景参考":
         reasons.append("质量门未完全通过")
+    if decision_tier == "仅背景参考" and summary == "前台证据通过质量门":
+        summary = "前台证据可辅助判断，不能单独放量"
     return {
-        "frontend_evidence_tier": tier,
+        "frontend_evidence_tier": evidence_tier,
+        "frontend_evidence_display_tier": decision_tier,
+        "frontend_decision_evidence_tier": decision_tier,
         "frontend_evidence_audit_summary": summary,
         "frontend_evidence_audit_reasons": reasons[:5],
         "frontend_evidence_audit_detail": "；".join(detail_parts[:5]),
-        "frontend_evidence_is_strong": tier == "强诊断可用",
+        "frontend_evidence_is_strong": decision_strong,
     }
 
 
@@ -365,9 +418,12 @@ def _frontend_core_keyword(shared: Any, marketplace: str, product_name: str, sku
         matches.append((score, line))
     if not matches:
         fallback = {
-            "demo desk lamp": "led desk lamp",
-            "demo notebook": "spiral notebook",
-            "demo cable ties": "reusable cable ties",
+            "演示台灯": "led desk lamp",
+            "演示笔记本": "metal desk lamp",
+            "演示垫片": "desk mat",
+            "演示耗材": "cable ties",
+            "演示线夹": "spiral notebook",
+            "演示收纳": "cable holder",
         }
         return fallback.get(hint, "")
     line = sorted(matches, key=lambda item: item[0])[0][1]
@@ -376,6 +432,83 @@ def _frontend_core_keyword(shared: Any, marketplace: str, product_name: str, sku
     if not core_terms:
         core_terms = line.get("core_keywords", []) or []
     return str(core_terms[0]).strip() if core_terms else ""
+
+
+def _ad_keyword_candidate(shared: Any, row: dict[str, object]) -> str:
+    for key in ["search_term_or_target", "search_term", "targeting", "keyword"]:
+        value = str(row.get(key) or "").strip()
+        if not value:
+            continue
+        normalized = re.sub(r"\s+", " ", value).strip()
+        if re.fullmatch(r"B0[A-Z0-9]{8}", normalized.upper()):
+            continue
+        if re.search(r"[a-zA-Z]", normalized) and len(normalized.split()) <= 8:
+            return normalized
+    return ""
+
+
+def _seller_sprite_opportunity_keyword(shared: Any, marketplace: str, asin: str, output_dir: Path | None = None) -> str:
+    path = (output_dir or shared.OUTPUT_DIR) / "sellersprite_reverse_asin_results.json"
+    if not path.exists():
+        return ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    records = payload.get("items", payload) if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        return ""
+    key = (str(marketplace or "").strip().upper(), str(asin or "").strip().upper())
+    best: tuple[float, str] = (0, "")
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record_key = (
+            str(record.get("marketplace") or "").strip().upper(),
+            str(record.get("asin") or "").strip().upper(),
+        )
+        if record_key != key:
+            continue
+        for item in record.get("keywords") or []:
+            if not isinstance(item, dict):
+                continue
+            keyword = str(item.get("keyword") or item.get("流量词") or "").strip()
+            if not keyword:
+                continue
+            score = 0.0
+            for metric in ["purchases", "购买量", "monthly_searches", "月搜索量", "spr", "SPR"]:
+                score += shared._to_float(item.get(metric)) or 0
+            if score > best[0]:
+                best = (score, keyword)
+    return best[1]
+
+
+def _title_fallback_keyword(product_name: str, sku: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9]+", " ", f"{product_name} {sku}").strip()
+    tokens = [token for token in text.split() if len(token) >= 3 and not re.fullmatch(r"B0[A-Z0-9]{8}", token.upper())]
+    return " ".join(tokens[:5])
+
+
+def _frontend_priority_keyword(
+    shared: Any,
+    row: dict[str, object],
+    *,
+    marketplace: str,
+    product_name: str,
+    sku: str,
+    asin: str,
+    output_dir: Path | None = None,
+) -> tuple[str, str]:
+    ad_keyword = _ad_keyword_candidate(shared, row)
+    if ad_keyword:
+        return ad_keyword, "广告词"
+    seller_keyword = _seller_sprite_opportunity_keyword(shared, marketplace, asin, output_dir=output_dir)
+    if seller_keyword:
+        return seller_keyword, "卖家精灵机会词"
+    configured = _frontend_core_keyword(shared, marketplace, product_name, sku, asin)
+    if configured:
+        return configured, "产品线核心词"
+    return _title_fallback_keyword(product_name, sku), "标题兜底词"
 
 
 def _load_frontend_check_results(shared: Any, output_dir: Path | None = None) -> dict[tuple[str, str, str], dict[str, object]]:
@@ -518,7 +651,15 @@ def _build_frontend_check_queue(
         if status in {"需要截图确认", "需要截图", "待截图确认"}:
             status = "待前台检查"
         product_name = shared._row_product_name(row)
-        core_keyword = _frontend_core_keyword(shared, market, product_name, sku, asin)
+        core_keyword, core_keyword_source = _frontend_priority_keyword(
+            shared,
+            row,
+            marketplace=market,
+            product_name=product_name,
+            sku=sku,
+            asin=asin,
+            output_dir=output_dir or shared.OUTPUT_DIR,
+        )
         row_out: dict[str, str] = {
             "marketplace": market,
             "product_name": product_name,
@@ -526,6 +667,7 @@ def _build_frontend_check_queue(
             "asin": asin,
             "product_url": _front_product_url(shared, market, asin),
             "frontend_core_keyword": core_keyword,
+            "frontend_core_keyword_source": core_keyword_source,
             "frontend_search_url": _front_search_url(shared, market, core_keyword),
             "trigger_reason": reason or source,
             "key_metrics": evidence,
@@ -566,6 +708,7 @@ def _build_frontend_check_queue(
         for field in [
             "frontend_data_date",
             "frontend_data_freshness",
+            "frontend_refresh_action",
             "frontend_check_method",
             "frontend_stability_total_attempts",
             "frontend_stability_success_count",
@@ -578,6 +721,9 @@ def _build_frontend_check_queue(
             "frontend_search_findings",
             "frontend_competitor_count",
             "frontend_competitors",
+            "competitor_comparability",
+            "comparable_competitor_count",
+            "competitor_mismatch_reason",
             "own_search_position",
             "frontend_last_error",
             "frontend_price",
@@ -619,6 +765,7 @@ def _build_frontend_check_queue(
             "frontend_evidence_audit_reasons",
             "frontend_evidence_audit_detail",
             "frontend_evidence_is_strong",
+            "frontend_decision_evidence_tier",
             "frontend_failure_stage",
             "frontend_failure_category",
             "frontend_failure_reason",
@@ -639,8 +786,20 @@ def _build_frontend_check_queue(
         location_scope = _frontend_location_scope(shared, row_out)
         if row_out.get("frontend_location_note") or row_out.get("frontend_delivery"):
             row_out["frontend_location_scope"] = location_scope
-            row_out["frontend_location_verified"] = location_scope in {"exact", "marketplace"}
-            row_out["frontend_location_exact"] = location_scope == "exact"
+            if location_scope in {"wrong", "missing", "unknown"}:
+                row_out["frontend_location_verified"] = False
+                row_out["frontend_location_exact"] = False
+            elif row_out.get("frontend_location_verified") in (None, ""):
+                row_out["frontend_location_verified"] = location_scope in {"exact", "marketplace"}
+            else:
+                row_out["frontend_location_verified"] = shared.boolish_flag(row_out.get("frontend_location_verified"))
+            if location_scope not in {"wrong", "missing", "unknown"}:
+                if location_scope != "exact":
+                    row_out["frontend_location_exact"] = False
+                elif row_out.get("frontend_location_exact") in (None, ""):
+                    row_out["frontend_location_exact"] = True
+                else:
+                    row_out["frontend_location_exact"] = shared.boolish_flag(row_out.get("frontend_location_exact"))
             location_warning = _frontend_location_warning(shared, row_out)
             if location_warning:
                 row_out["frontend_location_warning"] = location_warning
@@ -678,52 +837,219 @@ def _build_frontend_coverage_summary(shared: Any, frontend_rows: list[dict[str, 
     cached = 0
     search_success = 0
     search_partial = 0
+    own_sellersprite = 0
+    own_sellersprite_today = 0
+    own_sellersprite_cache = 0
+    own_sellersprite_pending = 0
+    own_sellersprite_failed = 0
+    sellersprite_trend_ready = 0
+    competitor_discovery = 0
+    competitor_pool = 0
+    competitor_pool_today = 0
+    competitor_pool_cache = 0
+    competitor_pool_pending = 0
+    competitor_pool_failed = 0
+    competitor_sellersprite = 0
+    competitor_sellersprite_today = 0
+    competitor_sellersprite_cache = 0
+    competitor_sellersprite_pending = 0
+    competitor_sellersprite_asins = 0
+    amazon_search_validation = 0
+    scalable_strong = 0
+    weak_defensive = 0
+    insufficient = 0
     stale_or_pending = 0
     strong = 0
     background = 0
     unusable = 0
+    market_complete = 0
+    market_usable = 0
+    market_insufficient = 0
+    market_failed = 0
+    market_score_total = 0.0
     for row in frontend_rows:
         status = str(row.get("frontend_check_status") or "")
         score = shared._to_float(row.get("frontend_evidence_quality_score"))
         warning = str(row.get("frontend_price_currency_warning") or "")
         tier = str(row.get("frontend_evidence_tier") or "")
+        display_tier = str(row.get("frontend_evidence_display_tier") or "").strip()
+        strong_flag = shared.boolish_flag(row.get("frontend_evidence_is_strong"))
+        effective_tier = display_tier or tier
+        strong_safe = effective_tier == "强诊断可用" and strong_flag
         is_live = status == "已自动检查"
-        is_cached = status.startswith("沿用")
+        is_cached = status.startswith("沿用") or shared.boolish_flag(row.get("frontend_cache_used"))
         if is_live:
             live += 1
         if is_cached:
             cached += 1
         if str(row.get("frontend_search_status") or "") == "已自动检查":
             search_success += 1
-        if str(row.get("frontend_search_status") or "") == "已读取部分结果" or bool(row.get("frontend_search_partial_evidence")):
+        if str(row.get("frontend_search_status") or "") == "已读取部分结果" or shared.boolish_flag(
+            row.get("frontend_search_partial_evidence")
+        ):
             search_partial += 1
-        if status in {"待前台检查", "读取失败", ""}:
+        if is_cached or status in {"待前台检查", "读取失败", ""}:
             stale_or_pending += 1
-        if tier == "强诊断可用":
+        seller_status = str(row.get("seller_sprite_check_status") or "").strip()
+        if seller_status and seller_status != "无缓存":
+            own_sellersprite += 1
+        today_status = str(row.get("sellersprite_today_status") or "").strip()
+        if today_status == "今日已抓":
+            own_sellersprite_today += 1
+        elif today_status == "沿用缓存":
+            own_sellersprite_cache += 1
+        elif today_status == "失败":
+            own_sellersprite_failed += 1
+        else:
+            own_sellersprite_pending += 1
+        if str(row.get("sellersprite_trend_status") or "") in {"3天趋势可用", "7天趋势可用"}:
+            sellersprite_trend_ready += 1
+        discovery_status = str(row.get("competitor_discovery_status") or "").strip()
+        if discovery_status in {"已抓取", "沿用缓存", "缓存"}:
+            competitor_discovery += 1
+        pool_count = int(shared._to_float(row.get("competitor_pool_count")) or 0)
+        pool_status = str(row.get("competitor_pool_status") or "").strip()
+        if pool_count > 0:
+            competitor_pool += 1
+            if today_status == "今日已抓":
+                competitor_pool_today += 1
+            else:
+                competitor_pool_cache += 1
+        elif pool_status in {"卖家精灵竞品发现失败", "竞品证据不足", "卖家精灵证据不足"}:
+            competitor_pool_failed += 1
+        else:
+            competitor_pool_pending += 1
+        comp_seller_count = int(shared._to_float(row.get("competitor_sellersprite_asin_count")) or 0)
+        if comp_seller_count > 0:
+            competitor_sellersprite += 1
+            competitor_sellersprite_asins += comp_seller_count
+            if today_status == "今日已抓":
+                competitor_sellersprite_today += 1
+            else:
+                competitor_sellersprite_cache += 1
+        else:
+            competitor_sellersprite_pending += 1
+        amazon_validation_status = str(row.get("amazon_search_validation_status") or "").strip()
+        if amazon_validation_status in {"已验证", "已读，无池内竞品", "部分"}:
+            amazon_search_validation += 1
+        product_conclusion = str(row.get("product_level_conclusion") or "").strip()
+        competitor_pool_missing = pool_count <= 0 or pool_status in {"", "待补", "卖家精灵证据不足", "卖家精灵竞品发现失败", "竞品证据不足"}
+        competitor_seller_missing = str(row.get("competitor_sellersprite_status") or "").strip() in {
+            "",
+            "待补",
+            "竞品反查待补",
+            "竞品卖家精灵证据不足",
+        }
+        amazon_verified = amazon_validation_status == "已验证"
+        scalable_status = str(row.get("scalable_evidence_status") or "").strip()
+        if (
+            strong_safe
+            and scalable_status == "可谨慎放量"
+            and product_conclusion == "可谨慎放量"
+            and not competitor_pool_missing
+            and not competitor_seller_missing
+            and amazon_verified
+        ):
+            scalable_strong += 1
+        if product_conclusion in {"产品问题优先", "暂停扩张", "只防守"} or str(row.get("frontend_auto_conclusion") or "") == "FRONTEND_WEAK":
+            weak_defensive += 1
+        if effective_tier == "不可用" or competitor_pool_missing or competitor_seller_missing or not seller_status or seller_status == "无缓存":
+            insufficient += 1
+        if strong_safe:
             strong += 1
-        elif tier == "仅背景参考":
+        elif effective_tier == "仅背景参考" or (tier == "强诊断可用" and not strong_safe):
             background += 1
-        elif tier == "不可用":
+        elif effective_tier == "不可用":
             unusable += 1
-        if tier in {"强诊断可用", "仅背景参考"} or ((is_live or is_cached) and not warning and score is not None and score >= 45):
+        if effective_tier != "不可用" and (
+            strong_safe
+            or effective_tier == "仅背景参考"
+            or ((is_live or is_cached) and not warning and score is not None and score >= 45)
+        ):
             usable += 1
+        market_level = str(row.get("market_survey_completeness_level") or "").strip()
+        market_score = shared._to_float(row.get("market_survey_completeness_score")) or 0
+        market_score_total += market_score
+        if market_level == "complete":
+            market_complete += 1
+        elif market_level == "usable":
+            market_usable += 1
+        elif market_level == "failed":
+            market_failed += 1
+        elif market_level == "insufficient":
+            market_insufficient += 1
     pct = (usable / total) if total else 0
+    strong_pct = (strong / total) if total else 0
+    background_pct = (background / total) if total else 0
     live_pct = (live / total) if total else 0
     search_pct = (search_success / total) if total else 0
     return {
         "frontend_queue_total": total,
         "frontend_usable_evidence_count": usable,
+        "frontend_decision_ready_count": strong,
+        "frontend_reference_evidence_count": background,
         "frontend_live_success_count": live,
         "frontend_cached_count": cached,
         "frontend_pending_or_stale_count": stale_or_pending,
         "frontend_search_success_count": search_success,
         "frontend_search_partial_count": search_partial,
+        "frontend_product_page_success_count": live,
+        "frontend_competitor_search_success_count": search_success,
+        "frontend_own_sellersprite_count": own_sellersprite,
+        "frontend_own_sellersprite_today_count": own_sellersprite_today,
+        "frontend_own_sellersprite_cache_count": own_sellersprite_cache,
+        "frontend_own_sellersprite_pending_count": own_sellersprite_pending,
+        "frontend_own_sellersprite_failed_count": own_sellersprite_failed,
+        "frontend_sellersprite_trend_ready_count": sellersprite_trend_ready,
+        "frontend_competitor_discovery_count": competitor_discovery,
+        "frontend_competitor_pool_count": competitor_pool,
+        "frontend_competitor_pool_today_count": competitor_pool_today,
+        "frontend_competitor_pool_cache_count": competitor_pool_cache,
+        "frontend_competitor_pool_pending_count": competitor_pool_pending,
+        "frontend_competitor_pool_failed_count": competitor_pool_failed,
+        "frontend_competitor_sellersprite_count": competitor_sellersprite,
+        "frontend_competitor_sellersprite_today_count": competitor_sellersprite_today,
+        "frontend_competitor_sellersprite_cache_count": competitor_sellersprite_cache,
+        "frontend_competitor_sellersprite_pending_count": competitor_sellersprite_pending,
+        "frontend_competitor_sellersprite_asin_count": competitor_sellersprite_asins,
+        "frontend_amazon_search_validation_count": amazon_search_validation,
+        "frontend_scalable_strong_count": scalable_strong,
+        "frontend_weak_defensive_count": weak_defensive,
+        "frontend_insufficient_count": insufficient,
         "frontend_strong_evidence_count": strong,
         "frontend_background_evidence_count": background,
         "frontend_unusable_evidence_count": unusable,
+        "market_survey_complete_count": market_complete,
+        "market_survey_usable_count": market_usable,
+        "market_survey_insufficient_count": market_insufficient,
+        "market_survey_failed_count": market_failed,
+        "market_survey_average_score": round(market_score_total / total, 1) if total else 0,
         "frontend_usable_evidence_rate": pct,
+        "frontend_decision_ready_rate": strong_pct,
+        "frontend_reference_evidence_rate": background_pct,
         "frontend_live_success_rate": live_pct,
         "frontend_search_success_rate": search_pct,
         "frontend_search_observed_rate": ((search_success + search_partial) / total) if total else 0,
+        "frontend_product_page_success_label": f"{live}/{total}" if total else "无前台队列",
+        "frontend_competitor_search_success_label": f"{search_success}/{total}" if total else "无前台队列",
+        "frontend_own_sellersprite_label": f"{own_sellersprite}/{total}" if total else "无前台队列",
+        "frontend_own_sellersprite_today_label": f"今日 {own_sellersprite_today}/{total}，缓存 {own_sellersprite_cache}/{total}" if total else "无前台队列",
+        "frontend_sellersprite_trend_ready_label": f"{sellersprite_trend_ready}/{total}" if total else "无前台队列",
+        "frontend_competitor_discovery_label": f"{competitor_discovery}/{total}" if total else "无前台队列",
+        "frontend_competitor_pool_label": f"{competitor_pool}/{total}" if total else "无前台队列",
+        "frontend_competitor_pool_freshness_label": f"今日 {competitor_pool_today}/{total}，7天缓存 {competitor_pool_cache}/{total}" if total else "无前台队列",
+        "frontend_competitor_sellersprite_label": f"{competitor_sellersprite}/{total}，{competitor_sellersprite_asins} ASIN" if total else "无前台队列",
+        "frontend_competitor_sellersprite_freshness_label": f"今日 {competitor_sellersprite_today}/{total}，缓存 {competitor_sellersprite_cache}/{total}" if total else "无前台队列",
+        "frontend_amazon_search_validation_label": f"{amazon_search_validation}/{total}" if total else "无前台队列",
+        "frontend_scalable_strong_label": f"{scalable_strong}/{total}" if total else "无前台队列",
+        "frontend_weak_defensive_label": f"{weak_defensive}/{total}" if total else "无前台队列",
+        "frontend_insufficient_label": f"{insufficient}/{total}" if total else "无前台队列",
+        "frontend_decision_ready_label": f"{strong}/{total} 强证据，{strong_pct:.0%}" if total else "无前台队列",
+        "frontend_reference_evidence_label": f"{background}/{total} 背景参考，{background_pct:.0%}" if total else "无前台队列",
         "frontend_coverage_label": f"{usable}/{total} 可用，{pct:.0%}" if total else "无前台队列",
+        "market_survey_complete_label": f"{market_complete}/{total}" if total else "无市场调查队列",
+        "market_survey_usable_label": f"{market_usable}/{total}" if total else "无市场调查队列",
+        "market_survey_insufficient_label": f"{market_insufficient}/{total}" if total else "无市场调查队列",
+        "market_survey_failed_label": f"{market_failed}/{total}" if total else "无市场调查队列",
+        "market_survey_average_score_label": f"{round(market_score_total / total, 1)}/100" if total else "无市场调查队列",
     }

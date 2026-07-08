@@ -18,12 +18,20 @@ from .analyze_rules import (
     _to_float,
 )
 from .autoopt_feedback import add_action_identity, build_optimization_notes, build_runtime_policy, load_feedback_input
-from .product_decision_layer import apply_decisions_to_rows, build_product_final_decisions, decision_summary, filter_ad_queue_by_decision
+from .product_decision_layer import (
+    FRONTEND_GATED_GROWTH_ACTIONS,
+    apply_decisions_to_rows,
+    build_product_final_decisions,
+    decision_summary,
+    filter_ad_queue_by_decision,
+)
 from .report_view import ad_workbench as ad_workbench_view
 from .report_view import frontend as frontend_view
 from .report_view import listing_review as listing_review_view
 from .report_view import operations as operations_view
 from .report_view import review as review_view
+from .market_survey_completeness import build_market_survey_fetch_plan
+from .sellersprite_fusion import enrich_report_view_rows
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "data" / "output"
 KEYWORD_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "product_line_keywords.json"
@@ -948,6 +956,22 @@ def _ad_memory_action_text(row: dict[str, object]) -> str:
     return ""
 
 
+def _ad_memory_term_action_key(row: dict[str, object]) -> tuple[str, str, str, str, str]:
+    identified = add_action_identity(dict(row), _ad_memory_action_text(row))
+    return (
+        str(identified.get("marketplace") or "").strip().upper(),
+        str(identified.get("sku") or "").strip(),
+        str(identified.get("asin") or "").strip().upper(),
+        str(
+            identified.get("search_term_or_target")
+            or identified.get("search_term")
+            or identified.get("targeting")
+            or ""
+        ).strip().lower(),
+        str(identified.get("normalized_action") or "").strip(),
+    )
+
+
 def _memory_block_reason(row: dict[str, object], runtime_policy: dict[str, object]) -> tuple[str, str]:
     identified = add_action_identity(dict(row), _ad_memory_action_text(row))
     action_id = str(identified.get("action_id") or "").strip()
@@ -968,6 +992,22 @@ def _memory_block_reason(row: dict[str, object], runtime_policy: dict[str, objec
             return action_id, reason
         return action_id, "已执行冷却中"
 
+    row_term_key = _ad_memory_term_action_key(row)
+    action_cooldowns = runtime_policy.get("action_cooldowns") or {}
+    if isinstance(action_cooldowns, dict):
+        for cooldown_id, cooldown in action_cooldowns.items():
+            if not isinstance(cooldown, dict):
+                continue
+            if _ad_memory_term_action_key(cooldown) != row_term_key:
+                continue
+            reason = str(
+                cooldown.get("block_reason")
+                or cooldown.get("reason")
+                or cooldown.get("status")
+                or "已执行冷却中"
+            ).strip()
+            return str(cooldown.get("action_id") or cooldown_id or action_id), reason
+
     memories = runtime_policy.get("keyword_strategy_memory") or []
     if not isinstance(memories, list):
         return "", ""
@@ -975,7 +1015,9 @@ def _memory_block_reason(row: dict[str, object], runtime_policy: dict[str, objec
         if not isinstance(memory, dict):
             continue
         memory_action_id = str(memory.get("action_id") or "").strip()
-        if not action_id or memory_action_id != action_id:
+        memory_matches_action_id = bool(action_id and memory_action_id == action_id)
+        memory_matches_term_key = _ad_memory_term_action_key(memory) == row_term_key
+        if not memory_matches_action_id and not memory_matches_term_key:
             continue
         try:
             score = int(memory.get("effectiveness_score") or 0)
@@ -986,12 +1028,12 @@ def _memory_block_reason(row: dict[str, object], runtime_policy: dict[str, objec
         halo_only = halo_text in {"1", "true", "yes", "是"} or str(memory.get("attribution_effect_status") or "") == "halo_only_conversion"
         should_block = bool(memory.get("should_block_repeating")) and review_outcome != "not_ready"
         if halo_only:
-            return action_id, "只有光环成交，需人工复查"
+            return memory_action_id or action_id, "只有光环成交，需人工复查"
         if review_outcome == "ineffective":
-            return action_id, "历史效果差，不重复推送"
+            return memory_action_id or action_id, "历史效果差，不重复推送"
         if should_block or (score < 0 and review_outcome not in {"not_ready", "insufficient_sample"}):
             reason = str(memory.get("block_reason") or memory.get("recommended_future_policy") or memory.get("evidence_summary") or "历史效果不支持重复推送").strip()
-            return action_id, reason
+            return memory_action_id or action_id, reason
     return "", ""
 
 
@@ -1024,12 +1066,13 @@ def _apply_ad_memory_hard_gate(
         item["blocked_action_id"] = action_id
         item["blocked_original_action"] = original_action
         item["keyword_memory_summary"] = reason
+        item = add_action_identity(item, "观察")
         existing_classification = str(item.get("classification_reason") or "").strip()
         block_line = f"自我优化拦截：{reason}"
         item["classification_reason"] = (
             f"{existing_classification}；{block_line}" if existing_classification else block_line
         )
-        item["confirmed_status"] = item.get("confirmed_status") or "仅背景参考"
+        item["confirmed_status"] = "已执行" if item.get("confirmed_status") == "已执行" else "仅背景参考"
         updated_rows.append(item)
     return updated_rows
 
@@ -1095,7 +1138,7 @@ def _growth_is_low_relevance(row: dict[str, object]) -> bool:
     tokens = [token for token in re.split(r"[^a-z0-9]+", term) if token]
     if len(tokens) <= 1:
         return True
-    if term in {"desk lamp", "notebook", "cable ties"} and (_numeric_value(row.get("orders") or row.get("ad_orders")) or 0) <= 0:
+    if term in {"dimmer desk lamp", "desk lamp", "office desk lamp"} and (_numeric_value(row.get("orders") or row.get("ad_orders")) or 0) <= 0:
         return True
     return False
 
@@ -1110,17 +1153,20 @@ def _growth_is_broad_core_without_conversion(row: dict[str, object]) -> bool:
     tokens = [token for token in re.split(r"[^a-z0-9]+", term) if token]
     if len(tokens) > 3:
         return False
-    if not {"desk", "lamp"}.issubset(set(tokens)):
+    if not {"dimmer", "board"}.issubset(set(tokens)):
         return False
     intent_modifiers = {
-        "adjustable",
-        "clip",
-        "dimmable",
-        "led",
+        "dimmer",
+        "catcher",
+        "tray",
         "office",
-        "reading",
-        "study",
-        "usb",
+        "wooden",
+        "metal",
+        "slicer",
+        "slicing",
+        "holder",
+        "box",
+        "kitchen",
     }
     return not any(token in intent_modifiers for token in tokens)
 
@@ -1134,7 +1180,7 @@ def _growth_evidence_level(row: dict[str, object]) -> str:
     if any(token in text for token in ["核心词", "强相关", "高相关", "core"]):
         return "核心强相关"
     term = str(row.get("search_term_or_target") or row.get("search_term") or "").lower()
-    if "desk" in term and "lamp" in term and any(token in term for token in ["adjustable", "clip", "dimmable", "led", "office", "reading", "study", "usb"]):
+    if "dimmer" in term and "board" in term and any(token in term for token in ["dimmer", "catcher", "tray", "office", "desk", "wooden", "metal", "slicer"]):
         return "强意图长尾"
     if clicks > 0:
         return "有点击样本不足"
@@ -1340,6 +1386,61 @@ def _growth_active_product_tests(rows: list[dict[str, object]]) -> set[tuple[str
     return active
 
 
+def _growth_action_set(value: object) -> set[str]:
+    if isinstance(value, (list, tuple, set)):
+        return {str(item).strip() for item in value if str(item).strip()}
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    if text.startswith("[") and text.endswith("]"):
+        for parser in (json.loads,):
+            try:
+                parsed = parser(text)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, (list, tuple, set)):
+                return {str(item).strip() for item in parsed if str(item).strip()}
+    for separator in ["；", ";", ",", "，", "|", "/"]:
+        text = text.replace(separator, "\n")
+    return {item.strip() for item in text.splitlines() if item.strip()}
+
+
+def _growth_test_allowed_by_product(product: dict[str, object]) -> bool:
+    allowed = _growth_action_set(product.get("today_allowed_actions"))
+    blocked = _growth_action_set(product.get("today_blocked_actions"))
+    if "today_allowed_actions" not in product:
+        return False
+    if "create_exact_low_budget" in blocked:
+        return False
+    if "create_exact_low_budget" not in allowed:
+        return False
+    return True
+
+
+def _filter_product_scale_rows_by_decision(
+    scale_rows: list[dict[str, object]],
+    decision_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    decisions = {
+        _growth_product_key(row): row
+        for row in decision_rows
+        if isinstance(row, dict) and any(_growth_product_key(row))
+    }
+    filtered: list[dict[str, object]] = []
+    for row in scale_rows:
+        if not isinstance(row, dict):
+            continue
+        decision = decisions.get(_growth_product_key(row))
+        if not decision:
+            filtered.append(row)
+            continue
+        blocked = _growth_action_set(decision.get("today_blocked_actions"))
+        if blocked.intersection(FRONTEND_GATED_GROWTH_ACTIONS):
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _growth_blocked_by_history(row: dict[str, object], history_rows: list[dict[str, object]]) -> bool:
     if not history_rows:
         return False
@@ -1387,12 +1488,9 @@ def _build_growth_test_rows(
             continue
         product = product_lookup.get(key, {})
         if not product:
-            product = {
-                "marketplace": row.get("marketplace"),
-                "sku": row.get("sku") or row.get("SKU"),
-                "asin": row.get("asin") or row.get("ASIN"),
-                "product_name": row.get("product_name") or row.get("产品"),
-            }
+            continue
+        if not _growth_test_allowed_by_product(product):
+            continue
         term = str(row.get("search_term_or_target") or row.get("search_term") or "").strip()
         dedupe_key = (*key, term.lower())
         if dedupe_key in seen:
@@ -2077,14 +2175,18 @@ def build_report_view(analysis_payload: dict) -> dict:
         tail = "点击数仍偏小，建议小幅测试。" if clicks < 10 else "表现稳定，可逐步加预算或提竞价。"
         scale_rows.append(
             {
+                "站点": evidence.get("marketplace") or marketplace,
                 "产品": evidence.get("product_name") or item.get("target") or "N/A",
                 "SKU": evidence.get("sku") or item.get("target") or "N/A",
+                "ASIN": evidence.get("asin") or "N/A",
                 "点击": _format_count(evidence.get("clicks")),
                 "花费": _money(evidence.get("spend"), evidence.get("marketplace") or marketplace, evidence.get("currency")),
                 "订单": _format_count(evidence.get("ad_orders")),
+                "总单": _format_count(evidence.get("total_orders")),
                 "销售额": _money(evidence.get("ad_sales"), evidence.get("marketplace") or marketplace, evidence.get("currency")),
                 "ACOS": _format_percent(evidence.get("ACOS")),
                 "目标 ACOS": _format_percent(evidence.get("target_acos")),
+                "放量等级": "可小幅放量",
                 "建议": f"ACOS {_format_percent(evidence.get('ACOS'))}，低于目标 {_format_percent(evidence.get('target_acos'))}，{tail}",
             }
         )
@@ -2353,6 +2455,15 @@ def build_report_view(analysis_payload: dict) -> dict:
         diagnosis_rows.get("listing_price_diagnosis_rows", []),
         marketplace,
     )
+    (
+        search_term_processing_queue_rows,
+        frontend_check_queue_rows,
+        seller_sprite_ads_fusion_rows,
+    ) = enrich_report_view_rows(
+        search_term_processing_queue_rows,
+        frontend_check_queue_rows,
+        report_date=str(analysis_payload.get("report_date") or ""),
+    )
     product_final_decision_rows = build_product_final_decisions(
         analysis_payload,
         today_rows=today_task_queue_rows,
@@ -2363,6 +2474,11 @@ def build_report_view(analysis_payload: dict) -> dict:
         runtime_policy=runtime_policy,
     )
     final_decision_summary = decision_summary(product_final_decision_rows)
+    market_survey_selective_fetch_plan = build_market_survey_fetch_plan(
+        frontend_check_queue_rows,
+        report_date=str(analysis_payload.get("report_date") or ""),
+    )
+    scale_rows = _filter_product_scale_rows_by_decision(scale_rows, product_final_decision_rows)
     search_term_processing_queue_rows = filter_ad_queue_by_decision(search_term_processing_queue_rows, product_final_decision_rows)
     scale_keyword_rows = filter_ad_queue_by_decision(scale_keyword_rows, product_final_decision_rows)
     search_term_processing_queue_rows = _apply_ad_memory_hard_gate(search_term_processing_queue_rows, runtime_policy)
@@ -2390,6 +2506,7 @@ def build_report_view(analysis_payload: dict) -> dict:
         runtime_policy,
         report_date=analysis_payload.get("report_date") or datetime.now().date().isoformat(),
     )
+    html_search_term_processing_queue_rows = [row for row in search_term_processing_queue_rows if row.get("html_visible") != "否"]
     optimization_notes = _self_optimization_notes(
         analysis_payload,
         {
@@ -2430,6 +2547,7 @@ def build_report_view(analysis_payload: dict) -> dict:
         "html_search_term_suggestion_rows": html_search_term_suggestion_rows,
         "search_term_processing_queue_rows": search_term_processing_queue_rows,
         "html_search_term_processing_queue_rows": html_search_term_processing_queue_rows,
+        "seller_sprite_ads_fusion_rows": seller_sprite_ads_fusion_rows,
         "hidden_low_click_search_terms": hidden_low_click_search_terms,
         "no_order_diagnosis_rows": no_order_diagnosis_rows,
         **diagnosis_rows,
@@ -2438,6 +2556,7 @@ def build_report_view(analysis_payload: dict) -> dict:
         "product_final_decision_rows": product_final_decision_rows,
         "product_operation_cards": product_operation_cards,
         "frontend_coverage_summary": frontend_coverage_summary,
+        "market_survey_selective_fetch_plan": market_survey_selective_fetch_plan,
         "final_decision_summary": final_decision_summary.get("final_decision_summary", {}),
         "decision_gate_counts": final_decision_summary.get("decision_gate_counts", {}),
         "today_task_queue_rows": today_task_queue_rows,
@@ -2556,6 +2675,38 @@ def build_marketplace_overview_block(result: dict) -> tuple[str, str]:
 
 
 def build_marketplace_summary_markdown(results: list[dict], report_date: str) -> str:
+    frontend_coverage_totals = {
+        "frontend_queue_total": 0,
+        "frontend_product_page_success_count": 0,
+        "frontend_competitor_search_success_count": 0,
+        "frontend_own_sellersprite_count": 0,
+        "frontend_own_sellersprite_today_count": 0,
+        "frontend_own_sellersprite_cache_count": 0,
+        "frontend_own_sellersprite_pending_count": 0,
+        "frontend_own_sellersprite_failed_count": 0,
+        "frontend_sellersprite_trend_ready_count": 0,
+        "frontend_competitor_discovery_count": 0,
+        "frontend_competitor_pool_count": 0,
+        "frontend_competitor_pool_today_count": 0,
+        "frontend_competitor_pool_cache_count": 0,
+        "frontend_competitor_pool_pending_count": 0,
+        "frontend_competitor_pool_failed_count": 0,
+        "frontend_competitor_sellersprite_count": 0,
+        "frontend_competitor_sellersprite_today_count": 0,
+        "frontend_competitor_sellersprite_cache_count": 0,
+        "frontend_competitor_sellersprite_pending_count": 0,
+        "frontend_competitor_sellersprite_asin_count": 0,
+        "frontend_amazon_search_validation_count": 0,
+        "frontend_scalable_strong_count": 0,
+        "frontend_weak_defensive_count": 0,
+        "frontend_insufficient_count": 0,
+        "market_survey_complete_count": 0,
+        "market_survey_usable_count": 0,
+        "market_survey_insufficient_count": 0,
+        "market_survey_failed_count": 0,
+    }
+    market_survey_score_total = 0.0
+    frontend_coverage_rows: list[dict[str, int | str]] = []
     lines = [
         f"# Marketplace Summary｜{report_date}",
         "",
@@ -2579,6 +2730,98 @@ def build_marketplace_summary_markdown(results: list[dict], report_date: str) ->
         lines.append(
             f"| {summary['marketplace']} | {summary['ads_row_count']} | {summary['erp_row_count']} | {summary['sku_count']} | {summary['asin_count']} | {status} | {note} |"
         )
+        coverage = (result.get("report_view") or {}).get("frontend_coverage_summary", {})
+        if isinstance(coverage, dict):
+            row = {
+                "marketplace": str(summary["marketplace"]),
+                "frontend_queue_total": int(float(coverage.get("frontend_queue_total", 0) or 0)),
+                "frontend_product_page_success_count": int(float(coverage.get("frontend_product_page_success_count", coverage.get("frontend_live_success_count", 0)) or 0)),
+                "frontend_competitor_search_success_count": int(float(coverage.get("frontend_competitor_search_success_count", coverage.get("frontend_search_success_count", 0)) or 0)),
+                "frontend_own_sellersprite_count": int(float(coverage.get("frontend_own_sellersprite_count", 0) or 0)),
+                "frontend_own_sellersprite_today_count": int(float(coverage.get("frontend_own_sellersprite_today_count", 0) or 0)),
+                "frontend_own_sellersprite_cache_count": int(float(coverage.get("frontend_own_sellersprite_cache_count", 0) or 0)),
+                "frontend_own_sellersprite_pending_count": int(float(coverage.get("frontend_own_sellersprite_pending_count", 0) or 0)),
+                "frontend_own_sellersprite_failed_count": int(float(coverage.get("frontend_own_sellersprite_failed_count", 0) or 0)),
+                "frontend_sellersprite_trend_ready_count": int(float(coverage.get("frontend_sellersprite_trend_ready_count", 0) or 0)),
+                "frontend_competitor_discovery_count": int(float(coverage.get("frontend_competitor_discovery_count", 0) or 0)),
+                "frontend_competitor_pool_count": int(float(coverage.get("frontend_competitor_pool_count", 0) or 0)),
+                "frontend_competitor_pool_today_count": int(float(coverage.get("frontend_competitor_pool_today_count", 0) or 0)),
+                "frontend_competitor_pool_cache_count": int(float(coverage.get("frontend_competitor_pool_cache_count", 0) or 0)),
+                "frontend_competitor_pool_pending_count": int(float(coverage.get("frontend_competitor_pool_pending_count", 0) or 0)),
+                "frontend_competitor_pool_failed_count": int(float(coverage.get("frontend_competitor_pool_failed_count", 0) or 0)),
+                "frontend_competitor_sellersprite_count": int(float(coverage.get("frontend_competitor_sellersprite_count", 0) or 0)),
+                "frontend_competitor_sellersprite_today_count": int(float(coverage.get("frontend_competitor_sellersprite_today_count", 0) or 0)),
+                "frontend_competitor_sellersprite_cache_count": int(float(coverage.get("frontend_competitor_sellersprite_cache_count", 0) or 0)),
+                "frontend_competitor_sellersprite_pending_count": int(float(coverage.get("frontend_competitor_sellersprite_pending_count", 0) or 0)),
+                "frontend_competitor_sellersprite_asin_count": int(float(coverage.get("frontend_competitor_sellersprite_asin_count", 0) or 0)),
+                "frontend_amazon_search_validation_count": int(float(coverage.get("frontend_amazon_search_validation_count", coverage.get("frontend_competitor_search_success_count", coverage.get("frontend_search_success_count", 0))) or 0)),
+                "frontend_scalable_strong_count": int(float(coverage.get("frontend_scalable_strong_count", 0) or 0)),
+                "frontend_weak_defensive_count": int(float(coverage.get("frontend_weak_defensive_count", 0) or 0)),
+                "frontend_insufficient_count": int(float(coverage.get("frontend_insufficient_count", 0) or 0)),
+                "market_survey_complete_count": int(float(coverage.get("market_survey_complete_count", 0) or 0)),
+                "market_survey_usable_count": int(float(coverage.get("market_survey_usable_count", 0) or 0)),
+                "market_survey_insufficient_count": int(float(coverage.get("market_survey_insufficient_count", 0) or 0)),
+                "market_survey_failed_count": int(float(coverage.get("market_survey_failed_count", 0) or 0)),
+                "market_survey_average_score": coverage.get("market_survey_average_score", 0) or 0,
+            }
+            if int(row["frontend_queue_total"]):
+                frontend_coverage_rows.append(row)
+                market_survey_score_total += float(row["market_survey_average_score"] or 0) * int(row["frontend_queue_total"])
+                for key in frontend_coverage_totals:
+                    frontend_coverage_totals[key] += int(row[key])
+    frontend_total = frontend_coverage_totals["frontend_queue_total"]
+    if frontend_total:
+        lines.extend(
+            [
+                "",
+                "## 前台证据覆盖",
+                "",
+                "| 站点 | 前台队列 | 产品页成功 | 卖家精灵自己 ASIN | 卖家精灵趋势 | 卖家精灵竞品发现 | 卖家精灵竞品池 | 竞品 ASIN 反查 | Amazon 搜索页辅助验证 | 达到放量准入 | 弱势止损证据 | 证据不足 |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for row in frontend_coverage_rows:
+            total = int(row["frontend_queue_total"])
+            lines.append(
+                f"| {row['marketplace']} | {total} | {int(row['frontend_product_page_success_count'])}/{total} | "
+                f"今日 {int(row['frontend_own_sellersprite_today_count'])}/{total}，缓存 {int(row['frontend_own_sellersprite_cache_count'])}/{total} | "
+                f"{int(row['frontend_sellersprite_trend_ready_count'])}/{total} | "
+                f"{int(row['frontend_competitor_discovery_count'])}/{total} | "
+                f"今日 {int(row['frontend_competitor_pool_today_count'])}/{total}，7天缓存 {int(row['frontend_competitor_pool_cache_count'])}/{total} | "
+                f"今日 {int(row['frontend_competitor_sellersprite_today_count'])}/{total}，缓存 {int(row['frontend_competitor_sellersprite_cache_count'])}/{total} | "
+                f"{int(row['frontend_amazon_search_validation_count'])}/{total} | "
+                f"{int(row['frontend_scalable_strong_count'])}/{total} | "
+                f"{int(row['frontend_weak_defensive_count'])}/{total} | "
+                f"{int(row['frontend_insufficient_count'])}/{total} |"
+            )
+        lines.append(
+            f"| ALL | {frontend_total} | {frontend_coverage_totals['frontend_product_page_success_count']}/{frontend_total} | "
+            f"今日 {frontend_coverage_totals['frontend_own_sellersprite_today_count']}/{frontend_total}，缓存 {frontend_coverage_totals['frontend_own_sellersprite_cache_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_sellersprite_trend_ready_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_competitor_discovery_count']}/{frontend_total} | "
+            f"今日 {frontend_coverage_totals['frontend_competitor_pool_today_count']}/{frontend_total}，7天缓存 {frontend_coverage_totals['frontend_competitor_pool_cache_count']}/{frontend_total} | "
+            f"今日 {frontend_coverage_totals['frontend_competitor_sellersprite_today_count']}/{frontend_total}，缓存 {frontend_coverage_totals['frontend_competitor_sellersprite_cache_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_amazon_search_validation_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_scalable_strong_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_weak_defensive_count']}/{frontend_total} | "
+            f"{frontend_coverage_totals['frontend_insufficient_count']}/{frontend_total} |"
+        )
+        market_survey_average = round(market_survey_score_total / frontend_total, 1)
+        lines.append(
+            "市场调查平均完整度 "
+            f"{market_survey_average}/100 强证据 / 可用证据 "
+            f"{frontend_coverage_totals['market_survey_complete_count']}/{frontend_total} / "
+            f"{frontend_coverage_totals['market_survey_usable_count']}/{frontend_total}"
+        )
+        if (
+            frontend_coverage_totals["market_survey_insufficient_count"]
+            or frontend_coverage_totals["market_survey_failed_count"]
+        ):
+            lines.append(
+                "市场调查待补 / 失败 "
+                f"{frontend_coverage_totals['market_survey_insufficient_count']}/{frontend_total} / "
+                f"{frontend_coverage_totals['market_survey_failed_count']}/{frontend_total}"
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 

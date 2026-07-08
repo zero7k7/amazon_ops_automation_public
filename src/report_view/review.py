@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from src.autoopt_feedback import ensure_action_review_contract, ensure_keyword_action_review_contract
+
 
 def _build_yesterday_attribution_rows(shared: Any, analysis_payload: dict, status: dict[str, object]) -> list[dict[str, str]]:
     marketplace = shared._infer_marketplace(analysis_payload)
@@ -175,23 +177,75 @@ def _latest_action_review_rows(shared: Any, marketplace: str | None = None, limi
     if marketplace_filter and marketplace_filter != "ALL":
         rows = [row for row in rows if str(row.get("marketplace") or "").strip().upper() == marketplace_filter]
     normalized: list[dict[str, str]] = []
+
+    def display_value(value: object) -> str:
+        return "" if value is None else str(value)
+
     for row in rows[:limit]:
         days = row.get("days_since_execution")
+        inferred_review_window = "7天后复盘" if shared._to_float(days) is not None and (shared._to_float(days) or 0) >= 7 else ("3天后复盘" if shared._to_float(days) is not None and (shared._to_float(days) or 0) >= 3 else "未满3天")
         action_detail = _compact_executed_action(shared, str(row.get("action_detail") or row.get("action_type") or ""))
         normalized.append(
-            {
+            ensure_action_review_contract(
+                {
                 "marketplace": str(row.get("marketplace") or ""),
                 "sku": str(row.get("sku") or ""),
                 "asin": str(row.get("asin") or ""),
                 "product_name": str(row.get("product_name") or ""),
+                "action_id": str(row.get("action_id") or ""),
+                "normalized_action": str(row.get("normalized_action") or ""),
+                "action_scope": str(row.get("action_scope") or ""),
+                "action_type": str(row.get("action_type") or ""),
+                "action_detail": str(row.get("action_detail") or ""),
                 "executed_action": action_detail,
                 "executed_at": str(row.get("executed_at") or ""),
-                "review_window": "7天后复盘" if shared._to_float(days) is not None and (shared._to_float(days) or 0) >= 7 else ("3天后复盘" if shared._to_float(days) is not None and (shared._to_float(days) or 0) >= 3 else "未满3天"),
+                "report_date": str(row.get("report_date") or ""),
+                "review_date": str(row.get("review_date") or ""),
+                "review_window": str(row.get("review_window") or inferred_review_window),
+                "outcome": str(row.get("outcome") or ""),
+                "effect_evidence": str(row.get("effect_evidence") or ""),
                 "effect_metrics": str(row.get("effect_evidence") or row.get("review_status") or ""),
                 "judgement": str(row.get("outcome") or "数据不足"),
+                "review_status": str(row.get("review_status") or ""),
+                "review_phase": str(row.get("review_phase") or ""),
+                "review_outcome": str(row.get("review_outcome") or ""),
+                "effectiveness_score": display_value(row.get("effectiveness_score")),
+                "cooldown_status": str(row.get("cooldown_status") or ""),
+                "cooldown_until": str(row.get("cooldown_until") or ""),
+                "block_reason": str(row.get("block_reason") or ""),
+                "rule_adjustment": str(row.get("rule_adjustment") or ""),
                 "next_step": str(row.get("rule_adjustment") or "继续观察，等待足够样本。"),
                 "days_since_execution": str(row.get("days_since_execution") or ""),
-            }
+                "current_7d_clicks": display_value(row.get("current_7d_clicks")),
+                "current_7d_spend": display_value(row.get("current_7d_spend")),
+                "current_7d_ad_orders": display_value(row.get("current_7d_ad_orders")),
+                "current_7d_promoted_ad_orders": display_value(row.get("current_7d_promoted_ad_orders")),
+                "current_7d_promoted_ad_sales": display_value(row.get("current_7d_promoted_ad_sales")),
+                "current_7d_halo_ad_orders": display_value(row.get("current_7d_halo_ad_orders")),
+                "current_7d_halo_ad_sales": display_value(row.get("current_7d_halo_ad_sales")),
+                "current_7d_total_orders": display_value(row.get("current_7d_total_orders")),
+                "current_7d_acos": display_value(row.get("current_7d_acos")),
+                "current_7d_target_acos": display_value(row.get("current_7d_target_acos")),
+                "current_7d_tacos": display_value(row.get("current_7d_tacos")),
+                "current_7d_available_stock": display_value(row.get("current_7d_available_stock")),
+                "current_14d_clicks": display_value(row.get("current_14d_clicks")),
+                "current_14d_spend": display_value(row.get("current_14d_spend")),
+                "current_14d_ad_orders": display_value(row.get("current_14d_ad_orders")),
+                "current_14d_promoted_ad_orders": display_value(row.get("current_14d_promoted_ad_orders")),
+                "current_14d_promoted_ad_sales": display_value(row.get("current_14d_promoted_ad_sales")),
+                "current_14d_halo_ad_orders": display_value(row.get("current_14d_halo_ad_orders")),
+                "current_14d_halo_ad_sales": display_value(row.get("current_14d_halo_ad_sales")),
+                "current_14d_total_orders": display_value(row.get("current_14d_total_orders")),
+                "current_14d_acos": display_value(row.get("current_14d_acos")),
+                "current_14d_tacos": display_value(row.get("current_14d_tacos")),
+                "current_14d_available_stock": display_value(row.get("current_14d_available_stock")),
+                "promoted_conversion_improved": display_value(row.get("promoted_conversion_improved")),
+                "halo_only_conversion": display_value(row.get("halo_only_conversion")),
+                "target_sku_not_converted": display_value(row.get("target_sku_not_converted")),
+                "attribution_effect_status": display_value(row.get("attribution_effect_status")),
+                "attribution_effect_note": display_value(row.get("attribution_effect_note")),
+                }
+            )
         )
     return normalized
 
@@ -215,7 +269,8 @@ def _latest_keyword_action_review_rows(shared: Any, marketplace: str | None = No
 
     for row in rows[:limit]:
         normalized.append(
-            {
+            ensure_keyword_action_review_contract(
+                {
                 "marketplace": str(row.get("marketplace") or ""),
                 "sku": str(row.get("sku") or ""),
                 "asin": str(row.get("asin") or ""),
@@ -236,8 +291,14 @@ def _latest_keyword_action_review_rows(shared: Any, marketplace: str | None = No
                 "action_scope": str(row.get("action_scope") or ""),
                 "action_id": str(row.get("action_id") or ""),
                 "review_window": str(row.get("review_window") or ""),
+                "outcome": str(row.get("outcome") or ""),
+                "effect_evidence": str(row.get("effect_evidence") or ""),
                 "effect_metrics": str(row.get("effect_evidence") or row.get("review_status") or ""),
                 "judgement": str(row.get("outcome") or "数据不足"),
+                "effectiveness_score": display_value(row.get("effectiveness_score")),
+                "cooldown_until": str(row.get("cooldown_until") or ""),
+                "block_reason": str(row.get("block_reason") or ""),
+                "rule_adjustment": str(row.get("rule_adjustment") or ""),
                 "next_step": str(row.get("rule_adjustment") or "继续观察，等待足够样本。"),
                 "days_since_execution": str(row.get("days_since_execution") or ""),
                 "current_7d_clicks": display_value(row.get("current_7d_clicks")),
@@ -249,6 +310,10 @@ def _latest_keyword_action_review_rows(shared: Any, marketplace: str | None = No
                 "current_7d_halo_ad_orders": display_value(row.get("current_7d_halo_ad_orders")),
                 "current_7d_halo_ad_sales": display_value(row.get("current_7d_halo_ad_sales")),
                 "current_7d_acos": display_value(row.get("current_7d_acos")),
+                "current_7d_target_acos": display_value(row.get("current_7d_target_acos")),
+                "current_7d_total_orders": display_value(row.get("current_7d_total_orders")),
+                "current_7d_tacos": display_value(row.get("current_7d_tacos")),
+                "current_7d_available_stock": display_value(row.get("current_7d_available_stock")),
                 "current_14d_clicks": display_value(row.get("current_14d_clicks")),
                 "current_14d_spend": display_value(row.get("current_14d_spend")),
                 "current_14d_ad_orders": display_value(row.get("current_14d_ad_orders")),
@@ -258,12 +323,17 @@ def _latest_keyword_action_review_rows(shared: Any, marketplace: str | None = No
                 "current_14d_halo_ad_orders": display_value(row.get("current_14d_halo_ad_orders")),
                 "current_14d_halo_ad_sales": display_value(row.get("current_14d_halo_ad_sales")),
                 "current_14d_acos": display_value(row.get("current_14d_acos")),
+                "current_14d_total_orders": display_value(row.get("current_14d_total_orders")),
+                "current_14d_tacos": display_value(row.get("current_14d_tacos")),
+                "current_14d_available_stock": display_value(row.get("current_14d_available_stock")),
                 "attribution_effect_status": display_value(row.get("attribution_effect_status")),
                 "attribution_effect_note": display_value(row.get("attribution_effect_note")),
                 "promoted_conversion_improved": display_value(row.get("promoted_conversion_improved")),
                 "halo_only_conversion": display_value(row.get("halo_only_conversion")),
                 "target_sku_not_converted": display_value(row.get("target_sku_not_converted")),
-            }
+                "learning_scope": str(row.get("learning_scope") or ""),
+                }
+            )
         )
     return normalized
 

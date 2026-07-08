@@ -9,12 +9,72 @@ from ..autoopt_feedback import add_action_identity, is_executable_action
 
 
 ACTIONABLE_COPY_LINES = {
+    "建议加价 10%-15%",
+    "建议加价 5%-10%",
+    "建议加价 3%-5%",
     "建议否词",
     "建议暂停 ASIN 定向",
     "建议降竞价 10%-20%",
     "建议降竞价 10%-15%",
     "建议降竞价 5%-10%",
 }
+
+
+_ACTION_GATE_LABELS = {
+    "bid_up": "加竞价",
+    "bid_down": "降竞价",
+    "broad_scale": "放量",
+    "budget_up": "加预算",
+    "create_exact_low_budget": "低预算精准测试",
+    "negative_exact": "否定精准",
+    "observe": "观察",
+    "pause": "暂停",
+}
+
+_LOSS_CONTROL_ACTIONS = {"bid_down", "negative_exact", "pause"}
+
+
+def _action_values(value: object) -> set[str]:
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = re.split(r"[/,，、\s]+", str(value or ""))
+    return {str(item).strip() for item in values if str(item).strip()}
+
+
+def _ad_gate_summary(row: dict[str, str]) -> str:
+    allowed = _action_values(row.get("today_allowed_actions") or row.get("final_ad_allowed_actions"))
+    blocked = _action_values(row.get("today_blocked_actions") or row.get("final_ad_blocked_actions"))
+    if blocked & {"bid_up", "budget_up", "broad_scale"} and not (allowed & {"bid_up", "budget_up", "broad_scale"}):
+        if "create_exact_low_budget" in allowed:
+            return "只允许精准小测"
+        if allowed & _LOSS_CONTROL_ACTIONS:
+            return "仅止损"
+        return "禁止放量"
+    if "create_exact_low_budget" in allowed and blocked & {"budget_up", "broad_scale"}:
+        return "允许精准小测"
+    if "bid_up" in allowed and blocked & {"budget_up", "broad_scale"}:
+        return "允许小幅加竞价"
+    if allowed & {"budget_up", "broad_scale"}:
+        return "放量前复核"
+    conclusion = str(row.get("product_level_conclusion") or row.get("final_decision_label") or "").strip()
+    return conclusion or ""
+
+
+def _ad_gate_detail(row: dict[str, str]) -> str:
+    boundary = str(
+        row.get("product_ad_boundary")
+        or row.get("final_decision_reason")
+        or row.get("decision_reason")
+        or ""
+    ).strip()
+    if boundary:
+        return boundary
+    blocked = _action_values(row.get("today_blocked_actions") or row.get("final_ad_blocked_actions"))
+    labels = [_ACTION_GATE_LABELS.get(action, action) for action in sorted(blocked) if action != "observe"]
+    if labels:
+        return "拦截：" + " / ".join(labels[:3])
+    return ""
 
 
 def _render_search_queue_groups(
@@ -234,30 +294,53 @@ def _scale_keywords_as_ad_queue_rows(
             str(row.get("asin") or "").strip(),
             str(row.get("search_term_or_target") or "").strip().lower(),
         )
-        converted.append(
-            {
-                "marketplace": row.get("marketplace") or "",
-                "product_name": row.get("product_name") or "",
-                "sku": row.get("sku") or "",
-                "asin": row.get("asin") or "",
-                "search_term_or_target": row.get("search_term_or_target") or "N/A",
-                "campaign": row.get("campaign_name") or "N/A",
-                "copy_action_line": copy_action,
-                "suggested_action": suggested,
-                "confirmed_status": "已执行"
-                if feedback_key in executed_feedback
-                else (row.get("confirmed_status") or "待确认"),
-                "clicks": row.get("clicks") or "0",
-                "spend": row.get("spend") or "N/A",
-                "orders": row.get("ad_orders") or "0",
-                "reason": f"{row.get('reason') or '14天出单且 ACOS 低于目标'}；ACOS {row.get('ACOS')} / 目标 {row.get('target_acos')}",
-                "manual_level": "出单词",
-                "classification_reason": f"{row.get('product_scale_level') or '放量候选'}，来自广告搜索词真实出单数据",
-                "html_visible": "是",
-                "ad_gate_blocked": row.get("ad_gate_blocked") or "",
-                "blocked_original_action": row.get("blocked_original_action") or "",
-            }
-        )
+        converted_row = {
+            "marketplace": row.get("marketplace") or "",
+            "product_name": row.get("product_name") or "",
+            "sku": row.get("sku") or "",
+            "asin": row.get("asin") or "",
+            "search_term_or_target": row.get("search_term_or_target") or "N/A",
+            "campaign": row.get("campaign") or row.get("campaign_name") or "N/A",
+            "campaign_name": row.get("campaign_name") or row.get("campaign") or "N/A",
+            "ad_group": row.get("ad_group") or row.get("ad_group_name") or "N/A",
+            "ad_group_name": row.get("ad_group_name") or row.get("ad_group") or "N/A",
+            "match_type": row.get("match_type") or "",
+            "matched_target": row.get("matched_target") or "",
+            "targeting": row.get("targeting") or "",
+            "match_type_or_targeting": row.get("match_type_or_targeting") or "",
+            "copy_action_line": copy_action,
+            "suggested_action": suggested,
+            "scale_action": row.get("scale_action") or "",
+            "confirmed_status": "已执行"
+            if feedback_key in executed_feedback
+            else (row.get("confirmed_status") or "待确认"),
+            "clicks": row.get("clicks") or "0",
+            "spend": row.get("spend") or "N/A",
+            "orders": row.get("ad_orders") or "0",
+            "ad_orders": row.get("ad_orders") or "0",
+            "ad_sales": row.get("ad_sales") or "",
+            "ACOS": row.get("ACOS") or "",
+            "CVR": row.get("CVR") or "",
+            "target_acos": row.get("target_acos") or "",
+            "reason": f"{row.get('reason') or '14天出单且 ACOS 低于目标'}；ACOS {row.get('ACOS')} / 目标 {row.get('target_acos')}",
+            "manual_level": "出单词",
+            "classification_reason": f"{row.get('product_scale_level') or '放量候选'}，来自广告搜索词真实出单数据",
+            "html_visible": "是",
+            "report_date": row.get("report_date") or "",
+            "next_review": row.get("next_review") or "",
+            "cooldown_days": row.get("cooldown_days") or "",
+            "ad_gate_blocked": row.get("ad_gate_blocked") or "",
+            "ad_memory_blocked": row.get("ad_memory_blocked") or "",
+            "blocked_action_id": row.get("blocked_action_id") or "",
+            "blocked_original_action": row.get("blocked_original_action") or "",
+            "keyword_memory_summary": row.get("keyword_memory_summary") or "",
+            "final_decision": row.get("final_decision") or "",
+            "final_decision_label": row.get("final_decision_label") or "",
+            "final_decision_reason": row.get("final_decision_reason") or "",
+            "today_allowed_actions": row.get("today_allowed_actions") or "",
+            "today_blocked_actions": row.get("today_blocked_actions") or "",
+        }
+        converted.append(add_action_identity(converted_row, suggested))
     return converted
 
 
@@ -594,6 +677,15 @@ def _render_ad_copy_boxes(shared: Any, rows: list[dict[str, str]], prefix: str) 
                 f'<span class="action">{html.escape(label)}</span>',
                 f'<span class="targeting">{html.escape(target_type if not targeting else targeting)}</span>',
             ]
+            product_conclusion = str(row.get("product_level_conclusion") or "").strip()
+            gate_summary = _ad_gate_summary(row)
+            gate_detail = _ad_gate_detail(row)
+            if product_conclusion:
+                chips.append(f'<span>产品结论 {html.escape(product_conclusion)}</span>')
+            if gate_summary:
+                chips.append(f'<span>产品门禁 {html.escape(gate_summary)}</span>')
+            if gate_detail:
+                chips.append(f'<span>边界 {html.escape(gate_detail)}</span>')
             if campaign:
                 chips.append(f'<span>Campaign {html.escape(campaign)}</span>')
             visual_rows.append(
@@ -755,6 +847,23 @@ def _render_ad_task_cards(shared: Any, rows: list[dict[str, str]]) -> str:
         )
         reason = str(row.get("reason") or "N/A")
         classification = str(row.get("classification_reason") or "")
+        product_conclusion = str(row.get("product_level_conclusion") or "").strip()
+        product_boundary = str(row.get("product_ad_boundary") or "").strip()
+        gate_summary = _ad_gate_summary(row)
+        gate_detail = _ad_gate_detail(row)
+        boundary_chips = "".join(
+            f'<span class="ad-metric-chip">{html.escape(label_text)} {html.escape(value)}</span>'
+            for label_text, value in [
+                ("产品结论", product_conclusion),
+                ("产品门禁", gate_summary),
+            ]
+            if value
+        )
+        boundary_box = (
+            f'<div class="ad-reason-box"><strong>产品级边界</strong><br>{shared._inline_markup(product_boundary or gate_detail or product_conclusion or "N/A")}</div>'
+            if product_conclusion or product_boundary or gate_summary or gate_detail
+            else ""
+        )
         completion_payload = _ad_completion_payload(row, label)
         completion_attrs = ""
         completion_control = ""
@@ -797,8 +906,10 @@ def _render_ad_task_cards(shared: Any, rows: list[dict[str, str]]) -> str:
                     f'<span class="ad-metric-chip">CPC {cpc:.2f}</span>' if cpc is not None else "",
                     f'<span class="ad-metric-chip">CVR {cvr:.1%}</span>' if cvr is not None else "",
                     f'<span class="ad-metric-chip">ACOS {html.escape(str(row.get("ACOS") or "N/A"))}</span>' if row.get("ACOS") else "",
+                    boundary_chips,
                     "</div>",
                     f'<div class="ad-reason-box"><strong>原因</strong><br>{shared._inline_markup(reason)}{("<br>" + shared._inline_markup(classification)) if classification else ""}</div>',
+                    boundary_box,
                     completion_control,
                     "</article>",
                 ]
@@ -1000,8 +1111,8 @@ def _render_ad_workbench(
     summary_with_growth["历史复盘"] = str(keyword_review_count)
     refresh_control = (
         '<div class="ad-feedback-refresh" data-ad-feedback-refresh>'
-        '<button class="button-link secondary" type="button" data-run-report-action="daily-update" data-run-report-reload-on-done="true">重新生成报告</button>'
-        '<span class="subtle" data-run-report-status="daily-update">已记录完成项后，点击刷新报告进入冷却和复盘。</span>'
+        '<button class="button-link secondary" type="button" data-run-report-action="report-refresh" data-run-report-reload-on-done="true">重新生成报告</button>'
+        '<span class="subtle" data-run-report-status="report-refresh">已记录完成项后，点击刷新报告进入冷却和复盘。</span>'
         "</div>"
     )
     toolbar = [

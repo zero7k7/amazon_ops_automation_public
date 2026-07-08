@@ -15,6 +15,366 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "data" / "output"
 FEEDBACK_INPUT_PATH = OUTPUT_DIR / "autoopt_feedback_input.json"
 DEFAULT_REVIEW_TARGET_ACOS = 0.10
+POSITIVE_DISPLAY_OUTCOMES = {"明确改善", "有改善迹象", "初步有效", "可保留"}
+NEGATIVE_DISPLAY_OUTCOMES = {"暂未改善", "重复无效", "无改善", "变差", "停止追加", "降优先级"}
+ACTION_REVIEW_REQUIRED_FIELDS = [
+    "action_id",
+    "normalized_action",
+    "action_scope",
+    "marketplace",
+    "sku",
+    "asin",
+    "product_name",
+    "action_type",
+    "action_detail",
+    "executed_at",
+    "report_date",
+    "review_date",
+    "days_since_execution",
+    "review_window",
+    "current_7d_clicks",
+    "current_7d_spend",
+    "current_7d_ad_orders",
+    "current_7d_promoted_ad_orders",
+    "current_7d_promoted_ad_sales",
+    "current_7d_halo_ad_orders",
+    "current_7d_halo_ad_sales",
+    "current_7d_total_orders",
+    "current_7d_acos",
+    "current_7d_target_acos",
+    "current_7d_tacos",
+    "current_7d_available_stock",
+    "current_14d_clicks",
+    "current_14d_spend",
+    "current_14d_ad_orders",
+    "current_14d_promoted_ad_orders",
+    "current_14d_promoted_ad_sales",
+    "current_14d_halo_ad_orders",
+    "current_14d_halo_ad_sales",
+    "current_14d_total_orders",
+    "current_14d_acos",
+    "current_14d_tacos",
+    "current_14d_available_stock",
+    "promoted_conversion_improved",
+    "halo_only_conversion",
+    "target_sku_not_converted",
+    "attribution_effect_status",
+    "attribution_effect_note",
+    "outcome",
+    "effect_evidence",
+    "review_status",
+    "review_phase",
+    "review_outcome",
+    "review_data_source",
+    "pre_7d_start",
+    "pre_7d_end",
+    "post_3d_start",
+    "post_3d_end",
+    "post_7d_start",
+    "post_7d_end",
+    "pre_7d_promoted_ad_orders",
+    "pre_7d_total_orders",
+    "pre_7d_tacos",
+    "post_3d_days",
+    "post_3d_promoted_ad_orders",
+    "post_3d_total_orders",
+    "post_3d_acos",
+    "post_3d_tacos",
+    "post_3d_available_stock",
+    "post_7d_days",
+    "post_7d_promoted_ad_orders",
+    "post_7d_total_orders",
+    "post_7d_acos",
+    "post_7d_tacos",
+    "post_7d_available_stock",
+    "effectiveness_score",
+    "cooldown_status",
+    "cooldown_until",
+    "block_reason",
+    "rule_adjustment",
+]
+KEYWORD_ACTION_REVIEW_REQUIRED_FIELDS = [
+    "action_id",
+    "normalized_action",
+    "action_scope",
+    "marketplace",
+    "sku",
+    "asin",
+    "product_name",
+    "search_term_or_target",
+    "action_detail",
+    "executed_at",
+    "report_date",
+    "review_date",
+    "days_since_execution",
+    "review_window",
+    "current_7d_clicks",
+    "current_7d_spend",
+    "current_7d_ad_orders",
+    "current_7d_ad_sales",
+    "current_7d_promoted_ad_orders",
+    "current_7d_promoted_ad_sales",
+    "current_7d_halo_ad_orders",
+    "current_7d_halo_ad_sales",
+    "current_7d_acos",
+    "current_7d_target_acos",
+    "current_7d_total_orders",
+    "current_7d_tacos",
+    "current_7d_available_stock",
+    "current_14d_clicks",
+    "current_14d_spend",
+    "current_14d_ad_orders",
+    "current_14d_ad_sales",
+    "current_14d_promoted_ad_orders",
+    "current_14d_promoted_ad_sales",
+    "current_14d_halo_ad_orders",
+    "current_14d_halo_ad_sales",
+    "current_14d_acos",
+    "current_14d_total_orders",
+    "current_14d_tacos",
+    "current_14d_available_stock",
+    "promoted_conversion_improved",
+    "halo_only_conversion",
+    "target_sku_not_converted",
+    "attribution_effect_status",
+    "attribution_effect_note",
+    "outcome",
+    "effect_evidence",
+    "review_status",
+    "review_phase",
+    "review_outcome",
+    "review_data_source",
+    "pre_7d_start",
+    "pre_7d_end",
+    "post_3d_start",
+    "post_3d_end",
+    "post_7d_start",
+    "post_7d_end",
+    "pre_7d_promoted_ad_orders",
+    "pre_7d_total_orders",
+    "pre_7d_tacos",
+    "post_3d_days",
+    "post_3d_promoted_ad_orders",
+    "post_3d_total_orders",
+    "post_3d_acos",
+    "post_3d_tacos",
+    "post_3d_available_stock",
+    "post_7d_days",
+    "post_7d_promoted_ad_orders",
+    "post_7d_total_orders",
+    "post_7d_acos",
+    "post_7d_tacos",
+    "post_7d_available_stock",
+    "effectiveness_score",
+    "cooldown_status",
+    "cooldown_until",
+    "block_reason",
+    "rule_adjustment",
+    "learning_scope",
+]
+
+
+def ensure_action_review_contract(row: dict[str, object]) -> dict[str, object]:
+    completed = dict(row)
+    for field in ACTION_REVIEW_REQUIRED_FIELDS:
+        completed.setdefault(field, "")
+    return _enforce_effective_review_evidence_contract(completed)
+
+
+def ensure_keyword_action_review_contract(row: dict[str, object]) -> dict[str, object]:
+    completed = dict(row)
+    for field in KEYWORD_ACTION_REVIEW_REQUIRED_FIELDS:
+        completed.setdefault(field, "")
+    return _enforce_effective_review_evidence_contract(completed)
+
+
+def _contract_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "是", "已是", "已验证"}
+
+
+def _contract_number(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        try:
+            number = float(text[:-1].strip()) / 100
+        except (TypeError, ValueError):
+            return None
+        return None if pd.isna(number) else number
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(number) else number
+
+
+def _contract_positive_score(value: object) -> bool:
+    number = _contract_number(value)
+    return bool(number is not None and number > 0)
+
+
+def _contract_indicates_halo_only(row: dict[str, object]) -> bool:
+    ad_orders = _contract_number(row.get("current_7d_ad_orders"))
+    promoted_orders = _contract_number(row.get("current_7d_promoted_ad_orders"))
+    halo_orders = _contract_number(row.get("current_7d_halo_ad_orders"))
+    return bool(
+        ad_orders is not None
+        and ad_orders > 0
+        and promoted_orders is not None
+        and promoted_orders <= 0
+        and halo_orders is not None
+        and halo_orders > 0
+    )
+
+
+def _set_review_outcome(row: dict[str, object], outcome: str, score: object, reason: str) -> dict[str, object]:
+    completed = dict(row)
+    completed["review_outcome"] = outcome
+    completed["effectiveness_score"] = score
+    completed["block_reason"] = reason
+    display_outcome = str(completed.get("outcome") or completed.get("judgement") or "").strip()
+    replacement = {
+        "needs_manual_review": "待人工复查",
+        "not_ready": "待7天确认",
+        "insufficient_sample": "待观察",
+        "ineffective": "暂未改善",
+    }.get(outcome)
+    if replacement and (
+        display_outcome in POSITIVE_DISPLAY_OUTCOMES
+        or not display_outcome
+        or (outcome == "not_ready" and display_outcome in NEGATIVE_DISPLAY_OUTCOMES)
+    ):
+        completed["outcome"] = replacement
+        completed["judgement"] = replacement
+    return completed
+
+
+def _enforce_effective_review_evidence_contract(row: dict[str, object]) -> dict[str, object]:
+    if _contract_indicates_halo_only(row):
+        row = {
+            **row,
+            "promoted_conversion_improved": False,
+            "halo_only_conversion": True,
+            "target_sku_not_converted": True,
+            "attribution_effect_status": "halo_only_conversion",
+            "attribution_effect_note": row.get("attribution_effect_note")
+            or "带来光环成交，目标 SKU 未验证；不能判定该 SKU 广告动作有效。",
+        }
+    display_outcome = str(row.get("outcome") or row.get("judgement") or "").strip()
+    days_since = _contract_number(row.get("days_since_execution"))
+    negative_final_claim = str(row.get("review_outcome") or "").strip() == "ineffective" or (
+        _contract_number(row.get("effectiveness_score")) is not None
+        and (_contract_number(row.get("effectiveness_score")) or 0) < 0
+        and str(row.get("review_outcome") or "").strip() not in {"needs_manual_review", "not_ready"}
+    )
+    if negative_final_claim and (days_since is None or days_since < 7):
+        return _set_review_outcome(row, "not_ready", None, "未满7天或缺执行日期，暂不判断无效")
+    if display_outcome in NEGATIVE_DISPLAY_OUTCOMES and (days_since is None or days_since < 3):
+        return _set_review_outcome(row, "not_ready", None, "未满3天或缺执行日期，暂不判断负面效果")
+    effective_claim = (
+        str(row.get("review_outcome") or "").strip() == "effective"
+        or display_outcome in POSITIVE_DISPLAY_OUTCOMES
+        or _contract_positive_score(row.get("effectiveness_score"))
+    )
+    if not effective_claim:
+        return row
+    if days_since is None or days_since < 7:
+        return _set_review_outcome(row, "not_ready", None, "未满7天或缺执行日期，暂不判断有效")
+    if _contract_truthy(row.get("halo_only_conversion")):
+        return _set_review_outcome(row, "needs_manual_review", -1, "只有光环成交，需人工复查")
+    if _contract_truthy(row.get("target_sku_not_converted")):
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 未验证成交，需人工复查")
+    if not _contract_truthy(row.get("promoted_conversion_improved")):
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少本 SKU 转化证据，需人工复查")
+    if str(row.get("review_data_source") or "").strip() != "execution_anchored_daily":
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行锚定7天复盘证据，需人工复查")
+    post_days = _contract_number(row.get("post_7d_days"))
+    if post_days is None or post_days < 7:
+        return _set_review_outcome(row, "needs_manual_review", -1, "执行锚定7天复盘覆盖不足，需人工复查")
+    post_promoted_orders = _contract_number(row.get("post_7d_promoted_ad_orders"))
+    if post_promoted_orders is None or post_promoted_orders <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行后7天本 SKU 订单数，需人工复查")
+    post_total_orders = _contract_number(row.get("post_7d_total_orders"))
+    if post_total_orders is None or post_total_orders <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行后7天总单，需人工复查")
+    if post_total_orders < post_promoted_orders:
+        return _set_review_outcome(row, "needs_manual_review", -1, "执行后7天本 SKU 订单数高于总单，复盘口径需复查")
+    if _ratio_number(row.get("post_7d_acos")) is None:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行后7天 ACOS，需人工复查")
+    if _ratio_number(row.get("post_7d_tacos")) is None:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行后7天 TACOS，需人工复查")
+    post_available_stock = _contract_number(row.get("post_7d_available_stock"))
+    if post_available_stock is None or post_available_stock <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少执行后7天可用库存，需人工复查")
+    current_promoted_orders = _contract_number(row.get("current_7d_promoted_ad_orders"))
+    if current_promoted_orders is not None and post_promoted_orders != current_promoted_orders:
+        return _set_review_outcome(row, "needs_manual_review", -1, "执行后7天本 SKU 订单数与当前7天复盘不一致，需人工复查")
+    promoted_orders = current_promoted_orders
+    if promoted_orders is None or promoted_orders <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少本 SKU 7天订单数，需人工复查")
+    missing_metrics = [
+        field
+        for field in [
+            "current_7d_clicks",
+            "current_7d_spend",
+            "current_7d_acos",
+            "current_7d_tacos",
+            "current_7d_total_orders",
+            "current_7d_available_stock",
+            "current_14d_promoted_ad_orders",
+            "current_14d_acos",
+            "current_14d_total_orders",
+            "current_14d_tacos",
+            "current_14d_available_stock",
+        ]
+        if _contract_number(row.get(field)) is None
+    ]
+    if missing_metrics:
+        return _set_review_outcome(row, "needs_manual_review", -1, f"缺少有效复盘指标：{', '.join(missing_metrics)}")
+    promoted_orders_14d = _contract_number(row.get("current_14d_promoted_ad_orders"))
+    if promoted_orders_14d is None or promoted_orders_14d <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "缺少本 SKU 14天订单数，需人工复查")
+    if promoted_orders_14d < promoted_orders:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 14天订单数小于7天订单数，复盘口径需复查")
+    ad_orders = _contract_number(row.get("current_7d_ad_orders"))
+    if ad_orders is not None and ad_orders < promoted_orders:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 7天订单数高于广告总订单数，复盘口径需复查")
+    total_orders = _contract_number(row.get("current_7d_total_orders"))
+    if total_orders is None or total_orders <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 有广告单但总单未验证，需人工复查")
+    if total_orders < promoted_orders:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 7天订单数高于总单，复盘口径需复查")
+    ad_orders_14d = _contract_number(row.get("current_14d_ad_orders"))
+    if ad_orders_14d is not None and ad_orders_14d < promoted_orders_14d:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 14天订单数高于广告总订单数，复盘口径需复查")
+    total_orders_14d = _contract_number(row.get("current_14d_total_orders"))
+    if total_orders_14d is not None and total_orders_14d < promoted_orders_14d:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 14天订单数高于总单，复盘口径需复查")
+    available_stock = _contract_number(row.get("current_7d_available_stock"))
+    if available_stock is None or available_stock <= 0:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 有单但当前库存不足，需人工复查")
+    acos = _ratio_number(row.get("current_7d_acos"))
+    target_acos = _ratio_number(
+        row.get("current_7d_target_acos") or row.get("target_acos") or row.get("suggested_target_acos")
+    )
+    if target_acos is None or target_acos <= 0:
+        target_acos = DEFAULT_REVIEW_TARGET_ACOS
+    if acos is not None and target_acos is not None and acos > target_acos:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 有单但 ACOS 高于目标，需人工复查")
+    tacos = _ratio_number(row.get("current_7d_tacos"))
+    if tacos is not None and target_acos is not None and tacos > target_acos:
+        return _set_review_outcome(row, "needs_manual_review", -1, "本 SKU 有单但 TACOS 高于目标，需人工复查")
+    return row
 
 
 def _now_str() -> str:
@@ -607,14 +967,28 @@ def _learning_item(row: dict[str, object], scope: str, score: int) -> dict[str, 
         "title": title,
         "effect_evidence": _short_effect_text(row),
         "next_step": _clean_text(row.get("rule_adjustment") or ""),
+        "block_reason": _clean_text(row.get("block_reason") or ""),
         "executed_at": _clean_text(row.get("executed_at") or ""),
         "review_window": _clean_text(row.get("review_window") or row.get("review_status") or ""),
-        "promoted_conversion_improved": bool(row.get("promoted_conversion_improved")),
-        "halo_only_conversion": bool(row.get("halo_only_conversion")),
-        "target_sku_not_converted": bool(row.get("target_sku_not_converted")),
+        "promoted_conversion_improved": _truthy(row.get("promoted_conversion_improved")),
+        "halo_only_conversion": _truthy(row.get("halo_only_conversion")),
+        "target_sku_not_converted": _truthy(row.get("target_sku_not_converted")),
         "attribution_effect_status": _clean_text(row.get("attribution_effect_status") or ""),
         "attribution_effect_note": _clean_text(row.get("attribution_effect_note") or ""),
     }
+
+
+def _review_learning_score(row: dict[str, object]) -> int:
+    review_outcome = _clean_text(row.get("review_outcome") or "")
+    if review_outcome:
+        if review_outcome == "not_ready":
+            return 0
+        if row.get("effectiveness_score") not in (None, ""):
+            return int(_to_number(row.get("effectiveness_score")))
+        standard_score = STANDARD_REVIEW_OUTCOME_SCORES.get(review_outcome)
+        return int(standard_score or 0)
+    outcome = _clean_text(row.get("outcome") or "")
+    return OUTCOME_SCORES.get(outcome, 0)
 
 
 def build_action_learning_policy(
@@ -623,8 +997,14 @@ def build_action_learning_policy(
     current_action_reviews: Iterable[dict[str, object]] | None = None,
     current_keyword_reviews: Iterable[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    action_rows = list(current_action_reviews or []) + load_action_review_history(output_dir, limit=12)
-    keyword_rows = list(current_keyword_reviews or []) + load_keyword_action_review_history(output_dir, limit=12)
+    action_rows = [
+        ensure_action_review_contract(row)
+        for row in (list(current_action_reviews or []) + load_action_review_history(output_dir, limit=12))
+    ]
+    keyword_rows = [
+        ensure_keyword_action_review_contract(row)
+        for row in (list(current_keyword_reviews or []) + load_keyword_action_review_history(output_dir, limit=12))
+    ]
 
     product_scores: dict[tuple[str, str, str], int] = defaultdict(int)
     term_scores: dict[tuple[str, str, str, str], int] = defaultdict(int)
@@ -639,8 +1019,7 @@ def build_action_learning_policy(
         key = _learning_product_key(row)
         if key == ("", "", ""):
             continue
-        outcome = _clean_text(row.get("outcome") or "")
-        score = OUTCOME_SCORES.get(outcome, 0)
+        score = _review_learning_score(row)
         fingerprint = (*key, _clean_text(row.get("action_detail") or row.get("action_type") or ""))
         if fingerprint in seen_product:
             continue
@@ -660,8 +1039,7 @@ def build_action_learning_policy(
         key = _learning_term_key(row)
         if key == ("", "", "", "") or not key[3]:
             continue
-        outcome = _clean_text(row.get("outcome") or "")
-        score = OUTCOME_SCORES.get(outcome, 0)
+        score = _review_learning_score(row)
         fingerprint = (*key, _clean_text(row.get("action_detail") or ""))
         if fingerprint in seen_term:
             continue
@@ -775,6 +1153,22 @@ def _standard_outcome_from_legacy(outcome: str) -> str:
     return "needs_manual_review" if outcome else "insufficient_sample"
 
 
+def _align_display_outcome_with_review(outcome: str, review_outcome: str) -> str:
+    if review_outcome == "needs_manual_review":
+        return "待人工复查"
+    if outcome not in POSITIVE_DISPLAY_OUTCOMES:
+        return outcome
+    if review_outcome == "effective":
+        return outcome
+    if review_outcome == "ineffective":
+        return "暂未改善"
+    if review_outcome == "not_ready":
+        return "待7天确认"
+    if review_outcome == "insufficient_sample":
+        return "待观察"
+    return outcome
+
+
 def _review_timing_fields(days_since: int | None) -> dict[str, object]:
     if days_since is None:
         return {
@@ -815,6 +1209,8 @@ def _standard_keyword_review_outcome(
     recent7: dict[str, object],
     recent14: dict[str, object],
     days_since: int | None,
+    product_recent7: dict[str, object] | None = None,
+    product_recent14: dict[str, object] | None = None,
 ) -> tuple[str, int | None, str]:
     timing = _review_timing_fields(days_since)
     if timing.get("review_outcome") == "not_ready":
@@ -831,6 +1227,32 @@ def _standard_keyword_review_outcome(
             return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], "本 SKU 有单但 ACOS 缺失，需人工复查"
         if acos7 > target_acos:
             return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], "本 SKU 有单但 ACOS 高于目标，需人工复查"
+        support = product_recent7 or recent7
+        missing_support_fields: list[str] = []
+        if _ratio_number(support.get("TACOS") or support.get("tacos")) is None:
+            missing_support_fields.append("TACOS")
+        if _clean_text(support.get("total_orders")) == "":
+            missing_support_fields.append("总单")
+        if _clean_text(support.get("available_stock")) == "":
+            missing_support_fields.append("库存")
+        if missing_support_fields:
+            return (
+                "needs_manual_review",
+                STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"],
+                f"本 SKU 有单但缺少{ '、'.join(missing_support_fields) }，需人工复查",
+            )
+        available_stock = _contract_number(support.get("available_stock"))
+        if available_stock is None or available_stock <= 0:
+            return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], "本 SKU 有单但当前库存不足，需人工复查"
+        total_orders = _contract_number(support.get("total_orders"))
+        if total_orders is None or total_orders <= 0:
+            return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], "本 SKU 有广告单但总单未验证，需人工复查"
+        tacos7 = _ratio_number(support.get("TACOS") or support.get("tacos"))
+        if tacos7 is not None and tacos7 > target_acos:
+            return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], "本 SKU 有单但 TACOS 高于目标，需人工复查"
+        long_window_block_reason = _review_long_window_support_block_reason(recent14, product_recent14)
+        if long_window_block_reason:
+            return "needs_manual_review", STANDARD_REVIEW_OUTCOME_SCORES["needs_manual_review"], long_window_block_reason
         return "effective", STANDARD_REVIEW_OUTCOME_SCORES["effective"], ""
     if not recent7 and not recent14:
         return "insufficient_sample", STANDARD_REVIEW_OUTCOME_SCORES["insufficient_sample"], ""
@@ -861,7 +1283,10 @@ def build_keyword_strategy_memory(
     current_keyword_reviews: Iterable[dict[str, object]] | None = None,
     feedback_rows: Iterable[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
-    rows = list(current_keyword_reviews or []) + load_keyword_action_review_history(output_dir, limit=20)
+    rows = [
+        ensure_keyword_action_review_contract(row)
+        for row in (list(current_keyword_reviews or []) + load_keyword_action_review_history(output_dir, limit=20))
+    ]
     feedback_lookup: dict[str, list[dict[str, object]]] = defaultdict(list)
     for feedback in feedback_rows or []:
         term = _clean_text(feedback.get("search_term_or_target") or "")
@@ -899,7 +1324,11 @@ def build_keyword_strategy_memory(
         if halo_only:
             policy = "do_not_bid_up_again" if normalized_action == "bid_up" else "lower_priority_until_new_data"
         should_keep = bool(score is not None and score >= 1) or policy == "keep_current_bid"
-        should_block = bool(review_outcome == "ineffective" or halo_only or policy in {"do_not_bid_up_again", "keep_current_bid"})
+        should_block = bool(
+            review_outcome in {"ineffective", "needs_manual_review"}
+            or halo_only
+            or policy in {"do_not_bid_up_again", "keep_current_bid"}
+        )
         memory_by_action[action_id] = {
             "action_id": action_id,
             "marketplace": row.get("marketplace") or "",
@@ -924,7 +1353,7 @@ def build_keyword_strategy_memory(
             "should_recheck_frontend": policy == "recheck_frontend_before_action" or review_outcome in {"ineffective", "needs_manual_review"},
             "evidence_summary": _short_effect_text(row),
             "last_seen_date": _clean_text(row.get("review_date") or row.get("executed_at") or row.get("report_date") or ""),
-            "promoted_conversion_improved": bool(row.get("promoted_conversion_improved")),
+            "promoted_conversion_improved": _truthy(row.get("promoted_conversion_improved")),
             "halo_only_conversion": halo_only,
             "target_sku_not_converted": target_not_converted,
             "attribution_effect_status": _clean_text(row.get("attribution_effect_status") or ""),
@@ -974,6 +1403,51 @@ def build_keyword_strategy_memory(
     )
 
 
+def _normalize_loaded_keyword_strategy_memory(row: dict[str, object]) -> dict[str, object]:
+    completed = ensure_keyword_action_review_contract(row)
+    outcome = _clean_text(completed.get("outcome") or completed.get("latest_effect_status") or completed.get("review_status") or "待观察")
+    review_outcome = _clean_text(completed.get("review_outcome") or "") or _standard_outcome_from_legacy(outcome)
+    if completed.get("effectiveness_score") in (None, ""):
+        score = STANDARD_REVIEW_OUTCOME_SCORES.get(review_outcome)
+    else:
+        score = int(_to_number(completed.get("effectiveness_score")))
+    halo_only = _truthy(completed.get("halo_only_conversion")) or _clean_text(completed.get("attribution_effect_status")) == "halo_only_conversion"
+    target_not_converted = _truthy(completed.get("target_sku_not_converted")) or halo_only
+    if halo_only:
+        score = min(score if score is not None else 0, 0)
+        review_outcome = "needs_manual_review"
+    identified = add_action_identity(completed, completed.get("action_detail") or completed.get("manual_action_taken"))
+    normalized_action = _clean_text(completed.get("normalized_action")) or str(identified.get("normalized_action") or "")
+    action_id = _clean_text(completed.get("action_id")) or str(identified.get("action_id") or "")
+    loaded_policy = _clean_text(completed.get("recommended_future_policy"))
+    if review_outcome == "effective" and score is not None and score > 0:
+        policy = loaded_policy or _future_policy(normalized_action, int(score or 0), outcome)
+    else:
+        policy = _future_policy(normalized_action, int(score or 0), outcome)
+    if halo_only:
+        policy = "do_not_bid_up_again" if normalized_action == "bid_up" else "lower_priority_until_new_data"
+    should_keep = bool(score is not None and score >= 1) or policy == "keep_current_bid"
+    should_block = bool(
+        review_outcome in {"ineffective", "needs_manual_review"}
+        or halo_only
+        or policy in {"do_not_bid_up_again", "keep_current_bid"}
+    )
+    return {
+        **completed,
+        "action_id": action_id,
+        "normalized_action": normalized_action,
+        "review_outcome": review_outcome,
+        "effectiveness_score": score,
+        "recommended_future_policy": policy,
+        "should_keep": should_keep,
+        "should_block_repeating": should_block,
+        "should_recheck_frontend": policy == "recheck_frontend_before_action" or review_outcome in {"ineffective", "needs_manual_review"},
+        "promoted_conversion_improved": _truthy(completed.get("promoted_conversion_improved")),
+        "halo_only_conversion": halo_only,
+        "target_sku_not_converted": target_not_converted,
+    }
+
+
 def _collect_product_metric_rows(results: list[dict[str, object]]) -> dict[str, dict[str, object]]:
     collected: dict[str, dict[str, object]] = {}
     for result in results:
@@ -1014,7 +1488,10 @@ def build_product_strategy_profiles(
     products = _collect_product_metric_rows(results)
     memory_by_product: dict[str, list[dict[str, object]]] = defaultdict(list)
     for memory in keyword_memory or []:
-        memory_by_product[_strategy_product_key(memory)].append(memory)
+        if not isinstance(memory, dict):
+            continue
+        normalized_memory = _normalize_loaded_keyword_strategy_memory(memory)
+        memory_by_product[_strategy_product_key(normalized_memory)].append(normalized_memory)
     for review in current_action_reviews or []:
         products.setdefault(_strategy_product_key(review), dict(review))
 
@@ -1131,6 +1608,12 @@ def build_recommendation_guard(
     keyword_memory: Iterable[dict[str, object]],
     runtime_policy: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    product_profile_rows = [row for row in product_profiles if isinstance(row, dict)]
+    keyword_memory_rows = [
+        _normalize_loaded_keyword_strategy_memory(row)
+        for row in keyword_memory
+        if isinstance(row, dict)
+    ]
     blocked: list[dict[str, object]] = []
     downgraded: list[dict[str, object]] = []
     allowed: list[dict[str, object]] = []
@@ -1140,7 +1623,7 @@ def build_recommendation_guard(
     if isinstance(action_cooldowns, dict):
         for action_id, cooldown in action_cooldowns.items():
             blocked.append({"action_id": action_id, "reason": "已执行动作冷却中，不进入 P0/P1 或复制区", **(cooldown if isinstance(cooldown, dict) else {})})
-    for memory in keyword_memory:
+    for memory in keyword_memory_rows:
         score = int(memory.get("effectiveness_score") or 0)
         if memory.get("should_block_repeating"):
             blocked.append(
@@ -1158,7 +1641,7 @@ def build_recommendation_guard(
         elif score > 0:
             allowed.append(memory)
             reused.append(memory)
-    for profile in product_profiles:
+    for profile in product_profile_rows:
         blocked_actions = profile.get("blocked_actions") or []
         if blocked_actions:
             downgraded.append(
@@ -1178,15 +1661,15 @@ def build_recommendation_guard(
             "downgraded_count": len(downgraded),
             "allowed_with_memory_count": len(allowed),
             "reused_success_pattern_count": len(reused),
-            "product_profile_count": len(list(product_profiles)) if not isinstance(product_profiles, list) else len(product_profiles),
-            "keyword_memory_count": len(list(keyword_memory)) if not isinstance(keyword_memory, list) else len(keyword_memory),
+            "product_profile_count": len(product_profile_rows),
+            "keyword_memory_count": len(keyword_memory_rows),
         },
         "blocked_recommendations": blocked[:80],
         "downgraded_recommendations": downgraded[:80],
         "allowed_recommendations_with_memory": allowed[:80],
         "reused_success_patterns": reused[:40],
-        "product_profile_updates": list(product_profiles)[:80] if isinstance(product_profiles, list) else [],
-        "keyword_memory_updates": list(keyword_memory)[:80] if isinstance(keyword_memory, list) else [],
+        "product_profile_updates": product_profile_rows[:80],
+        "keyword_memory_updates": keyword_memory_rows[:80],
     }
 
 
@@ -1350,7 +1833,11 @@ def build_runtime_policy(output_dir: Path | None = None) -> dict[str, object]:
     latest_product_profiles = _load_latest_json_payload(directory, "product_strategy_profiles_*.json")
     latest_keyword_memory = _load_latest_json_payload(directory, "keyword_strategy_memory_*.json")
     product_profiles = latest_product_profiles if isinstance(latest_product_profiles, list) else []
-    keyword_memory = latest_keyword_memory if isinstance(latest_keyword_memory, list) else []
+    keyword_memory = [
+        _normalize_loaded_keyword_strategy_memory(row)
+        for row in (latest_keyword_memory if isinstance(latest_keyword_memory, list) else [])
+        if isinstance(row, dict)
+    ]
     product_profiles_by_key = {
         _strategy_product_key(row): row for row in product_profiles if isinstance(row, dict)
     }
@@ -1436,7 +1923,7 @@ def derive_rule_adjustments(rows: list[dict[str, object]]) -> dict[str, object]:
                 {
                     "rule_scope": diagnosis,
                     "observed_status": f"已执行 {executed}/{total}",
-                    "suggested_adjustment": "保留并前置该类建议；可继续维持当前阈值。",
+                    "suggested_adjustment": "执行接受度较高，先保留当前展示；等3天/7天 promoted SKU 复盘证明有效后再提高优先级或维持阈值。",
                 }
             )
         elif background >= max(total // 2, 1):
@@ -1467,7 +1954,7 @@ def derive_rule_adjustments(rows: list[dict[str, object]]) -> dict[str, object]:
                 {
                     "rule_scope": f"{diagnosis} / {action}",
                     "observed_status": f"已执行 {counter.get('已执行', 0)}/{total}",
-                    "suggested_adjustment": "这类动作执行率较高，可继续保留为默认推荐。",
+                    "suggested_adjustment": "这类动作执行率较高，只能说明容易落地；等3天/7天 promoted SKU 复盘有效后再作为默认推荐。",
                 }
             )
 
@@ -1550,6 +2037,248 @@ def _date_after(start: object, days: int) -> str:
     return (start_day + timedelta(days=days)).isoformat()
 
 
+def _review_date_from_results(results: list[dict[str, object]]) -> str:
+    for result in results:
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        payload = result.get("analysis_payload") if isinstance(result.get("analysis_payload"), dict) else {}
+        for value in [summary.get("report_date"), payload.get("report_date")]:
+            text = _clean_text(value)
+            if not text:
+                continue
+            try:
+                return datetime.fromisoformat(text[:10]).date().isoformat()
+            except Exception:
+                continue
+    return datetime.now().date().isoformat()
+
+
+def _parse_review_day(value: object):
+    try:
+        return datetime.fromisoformat(str(value)[:10]).date()
+    except Exception:
+        return None
+
+
+def _safe_review_ratio(spend: float, sales: float) -> float | None:
+    if sales == 0:
+        return None if spend > 0 else 0.0
+    return spend / sales
+
+
+def _review_daily_key(row: dict[str, object]) -> tuple[str, str, str]:
+    return (
+        str(row.get("marketplace") or "").upper(),
+        str(row.get("sku") or "").strip(),
+        str(row.get("asin") or "").strip(),
+    )
+
+
+def _product_review_daily_lookup(results: list[dict[str, object]]) -> dict[tuple[str, str, str], list[dict[str, object]]]:
+    lookup: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    asin_key_counts: dict[tuple[str, str], set[str]] = {}
+    for result in results:
+        payload = result.get("analysis_payload") if isinstance(result.get("analysis_payload"), dict) else {}
+        rows = payload.get("review_product_daily") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            key = _review_daily_key(row)
+            if key == ("", "", ""):
+                continue
+            asin_key_counts.setdefault((key[0], key[2]), set()).add(key[1])
+            lookup.setdefault(key, []).append(row)
+    for (marketplace, asin), skus in asin_key_counts.items():
+        non_empty = {sku for sku in skus if sku}
+        if len(non_empty) == 1:
+            exact = lookup.get((marketplace, next(iter(non_empty)), asin))
+            if exact:
+                lookup.setdefault((marketplace, "", asin), exact)
+    return lookup
+
+
+def _keyword_review_daily_lookup(results: list[dict[str, object]]) -> dict[tuple[str, str, str, str], list[dict[str, object]]]:
+    lookup: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
+    for result in results:
+        payload = result.get("analysis_payload") if isinstance(result.get("analysis_payload"), dict) else {}
+        rows = payload.get("review_search_term_daily") if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            marketplace, sku, asin = _review_daily_key(row)
+            term = _clean_text(row.get("search_term") or row.get("targeting") or row.get("matched_target")).lower()
+            if not marketplace or not asin or not term:
+                continue
+            lookup.setdefault((marketplace, sku, asin, term), []).append(row)
+    return lookup
+
+
+def _sum_review_number(rows: list[dict[str, object]], field: str) -> float:
+    return sum(_to_number(row.get(field)) for row in rows)
+
+
+def _last_review_value(rows: list[dict[str, object]], field: str) -> object:
+    for row in sorted(rows, key=lambda item: str(item.get("date") or ""), reverse=True):
+        value = row.get(field)
+        if _clean_text(value) != "":
+            return value
+    return ""
+
+
+def _aggregate_product_review_window(
+    rows: list[dict[str, object]],
+    start_day,
+    end_day,
+) -> dict[str, object]:
+    if start_day is None or end_day is None or end_day < start_day:
+        return {}
+    window_rows: list[dict[str, object]] = []
+    for row in rows:
+        row_day = _parse_review_day(row.get("date"))
+        if row_day is not None and start_day <= row_day <= end_day:
+            window_rows.append(row)
+    spend = _sum_review_number(window_rows, "spend")
+    ad_sales = _sum_review_number(window_rows, "ad_sales")
+    total_sales = _sum_review_number(window_rows, "total_sales")
+    return {
+        "review_window_days": len({str(row.get("date") or "") for row in window_rows if _clean_text(row.get("date"))}),
+        "review_window_start": start_day.isoformat(),
+        "review_window_end": end_day.isoformat(),
+        "ad_clicks": _sum_review_number(window_rows, "clicks"),
+        "ad_spend": spend,
+        "ad_orders": _sum_review_number(window_rows, "ad_orders"),
+        "ad_sales": ad_sales,
+        "promoted_ad_orders": _sum_review_number(window_rows, "promoted_ad_orders"),
+        "promoted_ad_sales": _sum_review_number(window_rows, "promoted_ad_sales"),
+        "halo_ad_orders": _sum_review_number(window_rows, "halo_ad_orders"),
+        "halo_ad_sales": _sum_review_number(window_rows, "halo_ad_sales"),
+        "total_orders": _sum_review_number(window_rows, "total_orders"),
+        "total_sales": total_sales,
+        "natural_orders": _sum_review_number(window_rows, "natural_orders"),
+        "ACOS": _safe_review_ratio(spend, ad_sales),
+        "TACOS": _safe_review_ratio(spend, total_sales),
+        "available_stock": _last_review_value(window_rows, "available_stock"),
+        "target_acos": _last_review_value(window_rows, "target_acos"),
+    }
+
+
+def _aggregate_keyword_review_window(
+    rows: list[dict[str, object]],
+    start_day,
+    end_day,
+) -> dict[str, object]:
+    if start_day is None or end_day is None or end_day < start_day:
+        return {}
+    window_rows: list[dict[str, object]] = []
+    for row in rows:
+        row_day = _parse_review_day(row.get("date"))
+        if row_day is not None and start_day <= row_day <= end_day:
+            window_rows.append(row)
+    spend = _sum_review_number(window_rows, "spend")
+    ad_sales = _sum_review_number(window_rows, "ad_sales")
+    return {
+        "review_window_days": len({str(row.get("date") or "") for row in window_rows if _clean_text(row.get("date"))}),
+        "review_window_start": start_day.isoformat(),
+        "review_window_end": end_day.isoformat(),
+        "clicks": _sum_review_number(window_rows, "clicks"),
+        "spend": spend,
+        "ad_orders": _sum_review_number(window_rows, "ad_orders"),
+        "ad_sales": ad_sales,
+        "promoted_ad_orders": _sum_review_number(window_rows, "promoted_ad_orders"),
+        "promoted_ad_sales": _sum_review_number(window_rows, "promoted_ad_sales"),
+        "halo_ad_orders": _sum_review_number(window_rows, "halo_ad_orders"),
+        "halo_ad_sales": _sum_review_number(window_rows, "halo_ad_sales"),
+        "ACOS": _safe_review_ratio(spend, ad_sales),
+    }
+
+
+def _review_anchor_value(value: object) -> object:
+    return "N/A" if value is None else value
+
+
+def _anchored_product_review_windows(
+    rows: list[dict[str, object]],
+    confirmed_at: object,
+    review_date: str,
+) -> dict[str, dict[str, object]]:
+    confirmed_day = _parse_review_day(confirmed_at)
+    review_day = _parse_review_day(review_date)
+    if confirmed_day is None or review_day is None or not rows:
+        return {}
+    post_3_end = min(confirmed_day + timedelta(days=2), review_day)
+    post_7_end = min(confirmed_day + timedelta(days=6), review_day)
+    post_14_end = min(confirmed_day + timedelta(days=13), review_day)
+    return {
+        "pre_7d": _aggregate_product_review_window(rows, confirmed_day - timedelta(days=7), confirmed_day - timedelta(days=1)),
+        "post_3d": _aggregate_product_review_window(rows, confirmed_day, post_3_end),
+        "post_7d": _aggregate_product_review_window(rows, confirmed_day, post_7_end),
+        "post_14d": _aggregate_product_review_window(rows, confirmed_day, post_14_end),
+    }
+
+
+def _anchored_keyword_review_windows(
+    rows: list[dict[str, object]],
+    product_rows: list[dict[str, object]],
+    confirmed_at: object,
+    review_date: str,
+) -> dict[str, dict[str, object]]:
+    confirmed_day = _parse_review_day(confirmed_at)
+    review_day = _parse_review_day(review_date)
+    if confirmed_day is None or review_day is None or not rows:
+        return {}
+    post_3_end = min(confirmed_day + timedelta(days=2), review_day)
+    post_7_end = min(confirmed_day + timedelta(days=6), review_day)
+    post_14_end = min(confirmed_day + timedelta(days=13), review_day)
+    pre_start = confirmed_day - timedelta(days=7)
+    pre_end = confirmed_day - timedelta(days=1)
+    return {
+        "pre_7d": _aggregate_keyword_review_window(rows, pre_start, pre_end),
+        "post_3d": _aggregate_keyword_review_window(rows, confirmed_day, post_3_end),
+        "post_7d": _aggregate_keyword_review_window(rows, confirmed_day, post_7_end),
+        "post_14d": _aggregate_keyword_review_window(rows, confirmed_day, post_14_end),
+        "product_pre_7d": _aggregate_product_review_window(product_rows, pre_start, pre_end),
+        "product_post_3d": _aggregate_product_review_window(product_rows, confirmed_day, post_3_end),
+        "product_post_7d": _aggregate_product_review_window(product_rows, confirmed_day, post_7_end),
+        "product_post_14d": _aggregate_product_review_window(product_rows, confirmed_day, post_14_end),
+    }
+
+
+def _review_anchor_fields(windows: dict[str, dict[str, object]]) -> dict[str, object]:
+    pre = windows.get("pre_7d") or {}
+    post_3d = windows.get("post_3d") or {}
+    post = windows.get("post_7d") or {}
+    product_pre = windows.get("product_pre_7d") or pre
+    product_post_3d = windows.get("product_post_3d") or post_3d
+    product_post = windows.get("product_post_7d") or post
+    return {
+        "review_data_source": "execution_anchored_daily" if post else "rolling_window",
+        "pre_7d_start": pre.get("review_window_start", ""),
+        "pre_7d_end": pre.get("review_window_end", ""),
+        "post_3d_start": post_3d.get("review_window_start", ""),
+        "post_3d_end": post_3d.get("review_window_end", ""),
+        "post_7d_start": post.get("review_window_start", ""),
+        "post_7d_end": post.get("review_window_end", ""),
+        "pre_7d_promoted_ad_orders": pre.get("promoted_ad_orders", ""),
+        "pre_7d_total_orders": product_pre.get("total_orders", ""),
+        "pre_7d_tacos": product_pre.get("TACOS", ""),
+        "post_3d_days": post_3d.get("review_window_days", ""),
+        "post_3d_promoted_ad_orders": post_3d.get("promoted_ad_orders", ""),
+        "post_3d_total_orders": product_post_3d.get("total_orders", ""),
+        "post_3d_acos": _review_anchor_value(post_3d.get("ACOS", "")),
+        "post_3d_tacos": _review_anchor_value(product_post_3d.get("TACOS", "")),
+        "post_3d_available_stock": product_post_3d.get("available_stock", ""),
+        "post_7d_days": post.get("review_window_days", ""),
+        "post_7d_promoted_ad_orders": post.get("promoted_ad_orders", ""),
+        "post_7d_total_orders": product_post.get("total_orders", ""),
+        "post_7d_acos": _review_anchor_value(post.get("ACOS", "")),
+        "post_7d_tacos": _review_anchor_value(product_post.get("TACOS", "")),
+        "post_7d_available_stock": product_post.get("available_stock", ""),
+    }
+
+
 def _to_number(value: object) -> float:
     try:
         result = float(value)
@@ -1579,10 +2308,97 @@ def _ratio_number(value: object) -> float | None:
 
 
 def _review_target_acos(row: dict[str, object]) -> float:
-    target = _ratio_number(row.get("target_acos") or row.get("suggested_target_acos"))
+    target = _ratio_number(row.get("current_7d_target_acos") or row.get("target_acos") or row.get("suggested_target_acos"))
     if target is None or target <= 0:
         return DEFAULT_REVIEW_TARGET_ACOS
     return target
+
+
+def _first_review_value(row: dict[str, object], *fields: str) -> object:
+    for field in fields:
+        value = row.get(field)
+        if _clean_text(value) != "":
+            return value
+    return ""
+
+
+def _review_business_support_block_reason(
+    ad_row: dict[str, object],
+    support_row: dict[str, object] | None = None,
+) -> str:
+    support = support_row or ad_row
+    acos = _ratio_number(_first_review_value(ad_row, "ACOS", "acos", "current_7d_acos"))
+    target_acos = _review_target_acos(ad_row)
+    if acos is None:
+        return "本 SKU 有单但 ACOS 缺失，需人工复查"
+    if acos > target_acos:
+        return "本 SKU 有单但 ACOS 高于目标，需人工复查"
+    missing_support_fields: list[str] = []
+    if _ratio_number(_first_review_value(support, "TACOS", "tacos", "current_7d_tacos")) is None:
+        missing_support_fields.append("TACOS")
+    if _clean_text(_first_review_value(support, "total_orders", "current_7d_total_orders")) == "":
+        missing_support_fields.append("总单")
+    if _clean_text(_first_review_value(support, "available_stock", "current_7d_available_stock")) == "":
+        missing_support_fields.append("库存")
+    if missing_support_fields:
+        return f"本 SKU 有单但缺少{ '、'.join(missing_support_fields) }，需人工复查"
+    available_stock = _contract_number(_first_review_value(support, "available_stock", "current_7d_available_stock"))
+    if available_stock is None or available_stock <= 0:
+        return "本 SKU 有单但当前库存不足，需人工复查"
+    total_orders = _contract_number(_first_review_value(support, "total_orders", "current_7d_total_orders"))
+    if total_orders is None or total_orders <= 0:
+        return "本 SKU 有广告单但总单未验证，需人工复查"
+    tacos = _ratio_number(_first_review_value(support, "TACOS", "tacos", "current_7d_tacos"))
+    if tacos is not None and tacos > target_acos:
+        return "本 SKU 有单但 TACOS 高于目标，需人工复查"
+    return ""
+
+
+def _review_long_window_support_block_reason(
+    ad_row: dict[str, object],
+    support_row: dict[str, object] | None = None,
+) -> str:
+    attr = _attribution_effect_flags(ad_row)
+    promoted_orders = _contract_number(attr.get("promoted_orders"))
+    if promoted_orders is None or promoted_orders <= 0:
+        return "7天复盘缺少14天本 SKU 订单支撑，需人工复查"
+    ad_orders = _contract_number(attr.get("ad_orders"))
+    if ad_orders is not None and ad_orders < promoted_orders:
+        return "14天本 SKU 订单数高于广告总订单数，复盘口径需复查"
+    target_acos = _review_target_acos(ad_row)
+    acos = _ratio_number(_first_review_value(ad_row, "ACOS", "acos", "current_14d_acos"))
+    if acos is None:
+        return "14天本 SKU 有单但 ACOS 缺失，需人工复查"
+    if acos > target_acos:
+        return "14天本 SKU 有单但 ACOS 高于目标，需人工复查"
+    support = support_row or ad_row
+    missing_support_fields: list[str] = []
+    if _ratio_number(_first_review_value(support, "TACOS", "tacos", "current_14d_tacos")) is None:
+        missing_support_fields.append("TACOS")
+    if _clean_text(_first_review_value(support, "total_orders", "current_14d_total_orders")) == "":
+        missing_support_fields.append("总单")
+    if _clean_text(_first_review_value(support, "available_stock", "current_14d_available_stock")) == "":
+        missing_support_fields.append("库存")
+    if missing_support_fields:
+        return f"14天本 SKU 有单但缺少{ '、'.join(missing_support_fields) }，需人工复查"
+    available_stock = _contract_number(_first_review_value(support, "available_stock", "current_14d_available_stock"))
+    if available_stock is None or available_stock <= 0:
+        return "14天本 SKU 有单但当前库存不足，需人工复查"
+    total_orders = _contract_number(_first_review_value(support, "total_orders", "current_14d_total_orders"))
+    if total_orders is None or total_orders <= 0:
+        return "14天本 SKU 有广告单但总单未验证，需人工复查"
+    if total_orders < promoted_orders:
+        return "14天本 SKU 订单数高于总单，复盘口径需复查"
+    tacos = _ratio_number(_first_review_value(support, "TACOS", "tacos", "current_14d_tacos"))
+    if tacos is not None and tacos > target_acos:
+        return "14天本 SKU 有单但 TACOS 高于目标，需人工复查"
+    return ""
+
+
+def _review_window_evidence_prefix(days_since: int | None) -> str:
+    if days_since is not None and 3 <= days_since < 7:
+        return "3天复查口径，7天结论待补；"
+    return ""
 
 
 def _attribution_numbers(row: dict[str, object]) -> dict[str, float]:
@@ -1650,7 +2466,7 @@ def _review_effect(row: dict[str, str], recent7: dict[str, object], recent14: di
     total_orders14 = _to_number(recent14.get("total_orders"))
 
     evidence = (
-        f"近7天点击 {clicks7:.0f}，广告单 {ad_orders7:.0f}，总单 {total_orders7:.0f}，"
+        f"{_review_window_evidence_prefix(days_since)}近7天点击 {clicks7:.0f}，广告单 {ad_orders7:.0f}，总单 {total_orders7:.0f}，"
         f"本 SKU 单 {attr7['promoted_orders']:.0f}，光环单 {attr7['halo_orders']:.0f}，"
         f"花费 {spend7:.2f}；近14天广告单 {ad_orders14:.0f}，"
         f"本 SKU 单 {attr14['promoted_orders']:.0f}，光环单 {attr14['halo_orders']:.0f}，总单 {total_orders14:.0f}"
@@ -1663,10 +2479,21 @@ def _review_effect(row: dict[str, str], recent7: dict[str, object], recent14: di
         return "样本不足", evidence, "执行后流量样本不足，继续观察。"
     if attr7["halo_only_conversion"]:
         return "待观察", evidence, "带来光环成交，目标 SKU 未验证；不判定为动作有效，下次不因光环成交加价或放量。"
-    if attr7["promoted_conversion_improved"] or total_orders7 > 0:
+    if attr7["promoted_conversion_improved"]:
+        if days_since is not None and days_since < 7:
+            return "待7天确认", evidence, "执行后已有本 SKU 单，但未满7天；继续观察 ACOS/TACOS，不判定为有效。"
+        support_block_reason = _review_business_support_block_reason(recent7)
+        if support_block_reason:
+            return "待人工复查", evidence, f"{support_block_reason}；不能把该动作判为可复用。"
+        if days_since is not None and days_since >= 7:
+            long_window_block_reason = _review_long_window_support_block_reason(recent14)
+            if long_window_block_reason:
+                return "待人工复查", evidence, f"{long_window_block_reason}；不能把该动作判为可复用。"
         if "调价" in note_text or "价格" in action_text or "降竞价" in action_text:
             return "初步有效", evidence, "类似动作保留；下次同类问题优先提示复查价格/竞价效果。"
         return "有改善迹象", evidence, "继续累计到7天，再决定是否提高该类建议优先级。"
+    if total_orders7 > 0:
+        return "待观察", evidence, "总单有变化，但本 SKU 广告成交未验证；不把该动作判定为广告有效。"
     if clicks7 >= 10 or spend7 >= 5:
         return "暂未改善", evidence, "同类动作不要自动升级；下次优先要求补竞品/页面证据。"
     return "待观察", evidence, "样本未到强结论，保持原规则。"
@@ -1677,6 +2504,8 @@ def _review_keyword_effect(
     recent7: dict[str, object],
     recent14: dict[str, object],
     days_since: int | None,
+    product_recent7: dict[str, object] | None = None,
+    product_recent14: dict[str, object] | None = None,
 ) -> tuple[str, str, str]:
     action_text = _normalize_label_text(row.get("today_action") or row.get("manual_action_taken") or "")
     clicks7 = _to_number(recent7.get("clicks"))
@@ -1695,7 +2524,7 @@ def _review_keyword_effect(
     cvr14 = (orders14 / clicks14) if clicks14 else 0.0
 
     evidence = (
-        f"7天：点击 {clicks7:.0f}，花费 {spend7:.2f}，订单 {orders7:.0f}，本 SKU 单 {attr7['promoted_orders']:.0f}，光环单 {attr7['halo_orders']:.0f}，销售 {sales7:.2f}，CVR {cvr7:.1%}，ACOS {acos7_raw or 'N/A'}；"
+        f"{_review_window_evidence_prefix(days_since)}7天：点击 {clicks7:.0f}，花费 {spend7:.2f}，订单 {orders7:.0f}，本 SKU 单 {attr7['promoted_orders']:.0f}，光环单 {attr7['halo_orders']:.0f}，销售 {sales7:.2f}，CVR {cvr7:.1%}，ACOS {acos7_raw or 'N/A'}；"
         f"14天：点击 {clicks14:.0f}，花费 {spend14:.2f}，订单 {orders14:.0f}，本 SKU 单 {attr14['promoted_orders']:.0f}，光环单 {attr14['halo_orders']:.0f}，销售 {sales14:.2f}，CVR {cvr14:.1%}，ACOS {acos14_raw or 'N/A'}"
     )
     if days_since is None:
@@ -1704,19 +2533,35 @@ def _review_keyword_effect(
         return "样本不足", evidence, "执行未满3天，不判断该词效果。"
     if not recent7 and not recent14:
         return "数据不足", evidence, "当前搜索词窗口没有匹配到该词/ASIN，先确认是否改名、暂停或数据未覆盖。"
-    is_scale = any(token in action_text for token in ["加价", "提高竞价", "放量"])
+    is_scale = any(
+        token in action_text
+        for token in ["加价", "提高竞价", "放量", "小预算", "试投", "拉精准", "新建精准", "精准测试", "growth_test"]
+    )
     is_bid_down = "降竞价" in action_text or "降价" in action_text
     is_negative = "否" in action_text or "暂停" in action_text
     if attr7["halo_only_conversion"]:
         return "待观察", evidence, "带来光环成交，目标 SKU 未验证；不作为该词/ASIN动作有效，不继续加价或放量。"
     if is_scale:
-        if attr7["promoted_conversion_improved"] and sales7 > 0:
-            return "有改善迹象", evidence, "该词/ASIN加价后仍能出单，继续观察到7天；若 ACOS 仍低于目标，可保留当前竞价。"
+        if attr7["promoted_conversion_improved"]:
+            if days_since is None or days_since < 7:
+                return "待7天确认", evidence, "该词/ASIN已有本 SKU 单，但未满7天；继续观察 ACOS/TACOS，不追加预算，不判定为有效。"
+            support_block_reason = _review_business_support_block_reason(recent7, product_recent7)
+            if support_block_reason:
+                return "待人工复查", evidence, f"{support_block_reason}；暂不继续加价或放量。"
+            if days_since is not None and days_since >= 7:
+                long_window_block_reason = _review_long_window_support_block_reason(recent14, product_recent14)
+                if long_window_block_reason:
+                    return "待人工复查", evidence, f"{long_window_block_reason}；暂不继续加价或放量。"
+            if sales7 <= 0 and _to_number(attr7.get("promoted_sales")) <= 0:
+                return "待人工复查", evidence, "本 SKU 有单但销售额缺失，需人工复查；暂不继续加价或放量。"
+            return "有改善迹象", evidence, "该词/ASIN加价、拉精准或小预算试投后本 SKU 出单，继续观察到7天；若 ACOS/TACOS 仍低于目标，只保留当前竞价或小预算，不追加预算。"
         if clicks7 >= 8 or spend7 >= 5:
-            return "暂未改善", evidence, "加价后有流量但未出单，先不要继续加价，回到原竞价或改为观察。"
-        return "样本不足", evidence, "加价后样本不足，暂不追加预算。"
+            return "暂未改善", evidence, "加价、拉精准或小预算试投后有流量但未出单，先不要继续加价或追加预算，回到原竞价或改为观察。"
+        return "样本不足", evidence, "加价、拉精准或小预算试投后样本不足，暂不追加预算。"
     if is_bid_down:
         if attr7["promoted_conversion_improved"]:
+            if days_since is None or days_since < 7:
+                return "待7天确认", evidence, "降竞价后已有本 SKU 单，但未满7天；继续观察 ACOS/TACOS，不判定为有效。"
             return "有改善迹象", evidence, "降竞价后仍有订单，保留当前竞价并继续观察 ACOS。"
         if clicks7 <= 2 and spend7 < 3:
             return "初步有效", evidence, "降竞价后消耗已收敛，低优先级观察即可。"
@@ -1726,14 +2571,21 @@ def _review_keyword_effect(
             return "初步有效", evidence, "否词/暂停后该对象已停止消耗，保留处理结果。"
         return "待7天确认", evidence, "仍有消耗，需确认是否否词匹配类型或 ASIN 定向仍在投放。"
     if attr7["promoted_conversion_improved"]:
+        if days_since is None or days_since < 7:
+            return "待7天确认", evidence, "执行后已有本 SKU 单，但未满7天；继续观察，不判定为有效。"
         return "有改善迹象", evidence, "执行后有订单，继续观察。"
     return "待观察", evidence, "样本未到强结论，保持观察。"
 
 
-def build_action_review_rows(results: list[dict[str, object]], action_rows: list[dict[str, str]]) -> list[dict[str, object]]:
+def build_action_review_rows(
+    results: list[dict[str, object]],
+    action_rows: list[dict[str, str]],
+    review_date: str | None = None,
+) -> list[dict[str, object]]:
     metrics = _metric_lookup(results)
+    product_daily = _product_review_daily_lookup(results)
     review_rows: list[dict[str, object]] = []
-    review_date = datetime.now().date().isoformat()
+    review_date = review_date or _review_date_from_results(results)
     for row in action_rows:
         if _normalize_status(row.get("confirmed_status")) != "已执行":
             continue
@@ -1745,6 +2597,14 @@ def build_action_review_rows(results: list[dict[str, object]], action_rows: list
         current = metrics.get(key, {})
         recent7 = current.get("7d", {})
         recent14 = current.get("14d", {})
+        anchored_windows = _anchored_product_review_windows(
+            product_daily.get(key, []),
+            row.get("confirmed_at"),
+            review_date,
+        )
+        if anchored_windows.get("post_7d"):
+            recent7 = anchored_windows["post_7d"]
+            recent14 = anchored_windows.get("post_14d") or recent14
         attr7 = _attribution_effect_flags(recent7)
         attr14 = _attribution_effect_flags(recent14)
         confirmed_at = _clean_text(row.get("confirmed_at") or "")
@@ -1754,22 +2614,31 @@ def build_action_review_rows(results: list[dict[str, object]], action_rows: list
             days_since = 0
         effect_outcome, effect_evidence, rule_adjustment = _review_effect(row, recent7, recent14, days_since)
         timing_fields = _review_timing_fields(days_since)
+        identity = add_action_identity(row, row.get("today_action"), "product")
+        action_id = _clean_text(row.get("action_id") or identity.get("action_id"))
+        normalized_action = _clean_text(row.get("normalized_action") or identity.get("normalized_action"))
         if days_since is None:
             review_status = "待下次数据复查"
             outcome = "待复查"
+            review_window = "缺执行日期"
         elif days_since < 3:
             review_status = "未满3天，暂不判断效果"
             outcome = "样本不足"
+            review_window = "未满3天"
         elif days_since < 7:
             review_status = "可做3天复查，7天结论待补"
             outcome = "待7天确认"
+            review_window = "3天后复盘"
         else:
             review_status = "可做7天复查"
             outcome = "待人工判定有效/无效"
+            review_window = "7天后复盘"
         review_outcome, effectiveness_score, outcome_block_reason = _standard_keyword_review_outcome(
             recent7,
             recent14,
             days_since,
+            recent7,
+            recent14,
         )
         timing_fields["review_status"] = review_status
         timing_fields["review_outcome"] = review_outcome
@@ -1783,61 +2652,112 @@ def build_action_review_rows(results: list[dict[str, object]], action_rows: list
         if outcome_block_reason:
             timing_fields["block_reason"] = outcome_block_reason
         review_rows.append(
-            {
-                "action_id": add_action_identity(row, row.get("today_action"), "product").get("action_id"),
-                "normalized_action": add_action_identity(row, row.get("today_action"), "product").get("normalized_action"),
-                "action_scope": "product",
-                "marketplace": row.get("marketplace"),
-                "sku": row.get("sku"),
-                "asin": row.get("asin"),
-                "product_name": row.get("product_name"),
-                "action_type": row.get("diagnosis_type"),
-                "action_detail": row.get("today_action"),
-                "confirmed_note": row.get("confirmed_note", ""),
-                "executed_at": confirmed_at,
-                "report_date": report_date,
-                "review_date": review_date,
-                "days_since_execution": "" if days_since is None else days_since,
-                "current_7d_clicks": recent7.get("ad_clicks", ""),
-                "current_7d_spend": recent7.get("ad_spend", ""),
-                "current_7d_ad_orders": recent7.get("ad_orders", ""),
-                "current_7d_promoted_ad_orders": attr7["promoted_orders"],
-                "current_7d_promoted_ad_sales": attr7["promoted_sales"],
-                "current_7d_halo_ad_orders": attr7["halo_orders"],
-                "current_7d_halo_ad_sales": attr7["halo_sales"],
-                "current_7d_total_orders": recent7.get("total_orders", ""),
-                "current_7d_acos": recent7.get("ACOS", ""),
-                "current_14d_clicks": recent14.get("ad_clicks", ""),
-                "current_14d_spend": recent14.get("ad_spend", ""),
-                "current_14d_ad_orders": recent14.get("ad_orders", ""),
-                "current_14d_promoted_ad_orders": attr14["promoted_orders"],
-                "current_14d_promoted_ad_sales": attr14["promoted_sales"],
-                "current_14d_halo_ad_orders": attr14["halo_orders"],
-                "current_14d_halo_ad_sales": attr14["halo_sales"],
-                "current_14d_total_orders": recent14.get("total_orders", ""),
-                "current_14d_acos": recent14.get("ACOS", ""),
-                "promoted_conversion_improved": attr7["promoted_conversion_improved"],
-                "halo_only_conversion": attr7["halo_only_conversion"],
-                "target_sku_not_converted": attr7["target_sku_not_converted"],
-                "attribution_effect_status": attr7["attribution_effect_status"],
-                "attribution_effect_note": attr7["attribution_effect_note"],
-                "outcome": effect_outcome if outcome in {"待人工判定有效/无效", "待7天确认"} else outcome,
-                "effect_evidence": effect_evidence,
-                "review_status": review_status,
-                **timing_fields,
-                "rule_adjustment": rule_adjustment,
-            }
+            ensure_action_review_contract(
+                {
+                    "action_id": action_id,
+                    "normalized_action": normalized_action,
+                    "action_scope": "product",
+                    "marketplace": row.get("marketplace"),
+                    "sku": row.get("sku"),
+                    "asin": row.get("asin"),
+                    "product_name": row.get("product_name"),
+                    "action_type": row.get("diagnosis_type"),
+                    "action_detail": row.get("today_action"),
+                    "confirmed_note": row.get("confirmed_note", ""),
+                    "executed_at": confirmed_at,
+                    "report_date": report_date,
+                    "review_date": review_date,
+                    "days_since_execution": "" if days_since is None else days_since,
+                    "review_window": review_window,
+                    "current_7d_clicks": recent7.get("ad_clicks", ""),
+                    "current_7d_spend": recent7.get("ad_spend", ""),
+                    "current_7d_ad_orders": recent7.get("ad_orders", ""),
+                    "current_7d_promoted_ad_orders": attr7["promoted_orders"],
+                    "current_7d_promoted_ad_sales": attr7["promoted_sales"],
+                    "current_7d_halo_ad_orders": attr7["halo_orders"],
+                    "current_7d_halo_ad_sales": attr7["halo_sales"],
+                    "current_7d_total_orders": recent7.get("total_orders", ""),
+                    "current_7d_acos": recent7.get("ACOS", ""),
+                    "current_7d_target_acos": recent7.get("target_acos", recent7.get("suggested_target_acos", "")),
+                    "current_7d_tacos": recent7.get("TACOS", ""),
+                    "current_7d_available_stock": recent7.get("available_stock", ""),
+                    "current_14d_clicks": recent14.get("ad_clicks", ""),
+                    "current_14d_spend": recent14.get("ad_spend", ""),
+                    "current_14d_ad_orders": recent14.get("ad_orders", ""),
+                    "current_14d_promoted_ad_orders": attr14["promoted_orders"],
+                    "current_14d_promoted_ad_sales": attr14["promoted_sales"],
+                    "current_14d_halo_ad_orders": attr14["halo_orders"],
+                    "current_14d_halo_ad_sales": attr14["halo_sales"],
+                    "current_14d_total_orders": recent14.get("total_orders", ""),
+                    "current_14d_acos": recent14.get("ACOS", ""),
+                    "current_14d_tacos": recent14.get("TACOS", ""),
+                    "current_14d_available_stock": recent14.get("available_stock", ""),
+                    "promoted_conversion_improved": attr7["promoted_conversion_improved"],
+                    "halo_only_conversion": attr7["halo_only_conversion"],
+                    "target_sku_not_converted": attr7["target_sku_not_converted"],
+                    "attribution_effect_status": attr7["attribution_effect_status"],
+                    "attribution_effect_note": attr7["attribution_effect_note"],
+                    "outcome": _align_display_outcome_with_review(
+                        effect_outcome if outcome == "待人工判定有效/无效" else outcome,
+                        review_outcome,
+                    ),
+                    "effect_evidence": effect_evidence,
+                    "review_status": review_status,
+                    **timing_fields,
+                    **_review_anchor_fields(anchored_windows),
+                    "rule_adjustment": rule_adjustment,
+                }
+            )
         )
     return review_rows
+
+
+def _product_review_source_rows(
+    action_rows: list[dict[str, str]],
+    feedback_rows: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = list(action_rows)
+    seen_ids = {_clean_text(row.get("action_id")) for row in merged if _clean_text(row.get("action_id"))}
+    for row in feedback_rows:
+        if not isinstance(row, dict):
+            continue
+        if _normalize_status(row.get("confirmed_status")) != "已执行":
+            continue
+        if _clean_text(row.get("search_term_or_target")):
+            continue
+        if not is_executable_action(row):
+            continue
+        action_id = _clean_text(row.get("action_id"))
+        if action_id and action_id in seen_ids:
+            continue
+        action_text = (
+            row.get("today_action")
+            or row.get("manual_action_taken")
+            or row.get("suggested_action")
+            or row.get("normalized_action")
+        )
+        merged_row = dict(row)
+        merged_row["today_action"] = _clean_text(action_text)
+        merged_row["diagnosis_type"] = _clean_text(
+            merged_row.get("diagnosis_type") or merged_row.get("issue_type") or "已执行反馈"
+        )
+        if action_id:
+            seen_ids.add(action_id)
+        merged.append(merged_row)
+    return merged
 
 
 def build_keyword_action_review_rows(
     results: list[dict[str, object]],
     feedback_rows: Iterable[dict[str, object]],
+    review_date: str | None = None,
 ) -> list[dict[str, object]]:
     metrics = _keyword_metric_lookup(results)
+    product_metrics = _metric_lookup(results)
+    keyword_daily = _keyword_review_daily_lookup(results)
+    product_daily = _product_review_daily_lookup(results)
     review_rows: list[dict[str, object]] = []
-    review_date = datetime.now().date().isoformat()
+    review_date = review_date or _review_date_from_results(results)
     seen: set[tuple[str, str, str, str, str]] = set()
     for row in feedback_rows:
         if _normalize_status(row.get("confirmed_status")) != "已执行":
@@ -1856,6 +2776,20 @@ def build_keyword_action_review_rows(
         current = metrics.get((marketplace, sku, asin, term.lower())) or metrics.get((marketplace, "", asin, term.lower())) or {}
         recent7 = current.get("7d", {})
         recent14 = current.get("14d", {})
+        product_current = product_metrics.get((marketplace, sku, asin)) or product_metrics.get((marketplace, "", asin)) or {}
+        product_recent7 = product_current.get("7d", {})
+        product_recent14 = product_current.get("14d", {})
+        anchored_windows = _anchored_keyword_review_windows(
+            keyword_daily.get((marketplace, sku, asin, term.lower()), []),
+            product_daily.get((marketplace, sku, asin), []),
+            row.get("confirmed_at"),
+            review_date,
+        )
+        if anchored_windows.get("post_7d"):
+            recent7 = anchored_windows["post_7d"]
+            recent14 = anchored_windows.get("post_14d") or recent14
+            product_recent7 = anchored_windows.get("product_post_7d") or product_recent7
+            product_recent14 = anchored_windows.get("product_post_14d") or product_recent14
         attr7 = _attribution_effect_flags(recent7)
         attr14 = _attribution_effect_flags(recent14)
         confirmed_at = _clean_text(row.get("confirmed_at") or "")
@@ -1863,7 +2797,14 @@ def build_keyword_action_review_rows(
         days_since = _days_between(confirmed_at, review_date) if confirmed_at else None
         if days_since is not None and days_since < 0:
             days_since = 0
-        effect_outcome, effect_evidence, rule_adjustment = _review_keyword_effect(row, recent7, recent14, days_since)
+        effect_outcome, effect_evidence, rule_adjustment = _review_keyword_effect(
+            row,
+            recent7,
+            recent14,
+            days_since,
+            product_recent7,
+            product_recent14,
+        )
         timing_fields = _review_timing_fields(days_since)
         if days_since is None:
             review_status = "待下次数据复查"
@@ -1877,10 +2818,20 @@ def build_keyword_action_review_rows(
         else:
             review_status = "可做7天复查"
             review_window = "7天后复盘"
+        if days_since is None:
+            display_outcome = "待复查"
+        elif days_since < 3:
+            display_outcome = "样本不足"
+        elif days_since < 7:
+            display_outcome = "待7天确认"
+        else:
+            display_outcome = effect_outcome
         review_outcome, effectiveness_score, outcome_block_reason = _standard_keyword_review_outcome(
             recent7,
             recent14,
             days_since,
+            product_recent7,
+            product_recent14,
         )
         timing_fields["review_status"] = review_status
         timing_fields["review_outcome"] = review_outcome
@@ -1894,52 +2845,62 @@ def build_keyword_action_review_rows(
         if outcome_block_reason:
             timing_fields["block_reason"] = outcome_block_reason
         review_rows.append(
-            {
-                "action_id": add_action_identity(row, action_detail).get("action_id"),
-                "normalized_action": add_action_identity(row, action_detail).get("normalized_action"),
-                "action_scope": add_action_identity(row, action_detail).get("action_scope"),
-                "marketplace": marketplace,
-                "sku": sku,
-                "asin": asin,
-                "product_name": row.get("product_name") or "",
-                "search_term_or_target": term,
-                "action_detail": action_detail,
-                "confirmed_note": row.get("confirmed_note", ""),
-                "executed_at": confirmed_at,
-                "report_date": report_date,
-                "review_date": review_date,
-                "days_since_execution": "" if days_since is None else days_since,
-                "review_window": review_window,
-                "current_7d_clicks": recent7.get("clicks", ""),
-                "current_7d_spend": recent7.get("spend", ""),
-                "current_7d_ad_orders": recent7.get("ad_orders", ""),
-                "current_7d_ad_sales": recent7.get("ad_sales", ""),
-                "current_7d_promoted_ad_orders": attr7["promoted_orders"],
-                "current_7d_promoted_ad_sales": attr7["promoted_sales"],
-                "current_7d_halo_ad_orders": attr7["halo_orders"],
-                "current_7d_halo_ad_sales": attr7["halo_sales"],
-                "current_7d_acos": recent7.get("ACOS", ""),
-                "current_14d_clicks": recent14.get("clicks", ""),
-                "current_14d_spend": recent14.get("spend", ""),
-                "current_14d_ad_orders": recent14.get("ad_orders", ""),
-                "current_14d_ad_sales": recent14.get("ad_sales", ""),
-                "current_14d_promoted_ad_orders": attr14["promoted_orders"],
-                "current_14d_promoted_ad_sales": attr14["promoted_sales"],
-                "current_14d_halo_ad_orders": attr14["halo_orders"],
-                "current_14d_halo_ad_sales": attr14["halo_sales"],
-                "current_14d_acos": recent14.get("ACOS", ""),
-                "promoted_conversion_improved": attr7["promoted_conversion_improved"],
-                "halo_only_conversion": attr7["halo_only_conversion"],
-                "target_sku_not_converted": attr7["target_sku_not_converted"],
-                "attribution_effect_status": attr7["attribution_effect_status"],
-                "attribution_effect_note": attr7["attribution_effect_note"],
-                "outcome": effect_outcome,
-                "effect_evidence": effect_evidence,
-                "review_status": review_status,
-                **timing_fields,
-                "rule_adjustment": rule_adjustment,
-                "learning_scope": "keyword_or_target",
-            }
+            ensure_keyword_action_review_contract(
+                {
+                    "action_id": add_action_identity(row, action_detail).get("action_id"),
+                    "normalized_action": add_action_identity(row, action_detail).get("normalized_action"),
+                    "action_scope": add_action_identity(row, action_detail).get("action_scope"),
+                    "marketplace": marketplace,
+                    "sku": sku,
+                    "asin": asin,
+                    "product_name": row.get("product_name") or "",
+                    "search_term_or_target": term,
+                    "action_detail": action_detail,
+                    "confirmed_note": row.get("confirmed_note", ""),
+                    "executed_at": confirmed_at,
+                    "report_date": report_date,
+                    "review_date": review_date,
+                    "days_since_execution": "" if days_since is None else days_since,
+                    "review_window": review_window,
+                    "current_7d_clicks": recent7.get("clicks", ""),
+                    "current_7d_spend": recent7.get("spend", ""),
+                    "current_7d_ad_orders": recent7.get("ad_orders", ""),
+                    "current_7d_ad_sales": recent7.get("ad_sales", ""),
+                    "current_7d_promoted_ad_orders": attr7["promoted_orders"],
+                    "current_7d_promoted_ad_sales": attr7["promoted_sales"],
+                    "current_7d_halo_ad_orders": attr7["halo_orders"],
+                    "current_7d_halo_ad_sales": attr7["halo_sales"],
+                    "current_7d_acos": recent7.get("ACOS", ""),
+                    "current_7d_target_acos": recent7.get("target_acos", recent7.get("suggested_target_acos", "")),
+                    "current_7d_total_orders": product_recent7.get("total_orders", ""),
+                    "current_7d_tacos": product_recent7.get("TACOS", ""),
+                    "current_7d_available_stock": product_recent7.get("available_stock", ""),
+                    "current_14d_clicks": recent14.get("clicks", ""),
+                    "current_14d_spend": recent14.get("spend", ""),
+                    "current_14d_ad_orders": recent14.get("ad_orders", ""),
+                    "current_14d_ad_sales": recent14.get("ad_sales", ""),
+                    "current_14d_promoted_ad_orders": attr14["promoted_orders"],
+                    "current_14d_promoted_ad_sales": attr14["promoted_sales"],
+                    "current_14d_halo_ad_orders": attr14["halo_orders"],
+                    "current_14d_halo_ad_sales": attr14["halo_sales"],
+                    "current_14d_acos": recent14.get("ACOS", ""),
+                    "current_14d_total_orders": product_recent14.get("total_orders", ""),
+                    "current_14d_tacos": product_recent14.get("TACOS", ""),
+                    "current_14d_available_stock": product_recent14.get("available_stock", ""),
+                    "promoted_conversion_improved": attr7["promoted_conversion_improved"],
+                    "halo_only_conversion": attr7["halo_only_conversion"],
+                    "target_sku_not_converted": attr7["target_sku_not_converted"],
+                    "attribution_effect_status": attr7["attribution_effect_status"],
+                    "attribution_effect_note": attr7["attribution_effect_note"],
+                    "outcome": _align_display_outcome_with_review(display_outcome, review_outcome),
+                    "effect_evidence": effect_evidence,
+                    "review_status": review_status,
+                    **timing_fields,
+                    **_review_anchor_fields(anchored_windows),
+                    "rule_adjustment": rule_adjustment,
+                    "learning_scope": "keyword_or_target",
+                }
+            )
         )
     return review_rows
 
@@ -1947,8 +2908,22 @@ def build_keyword_action_review_rows(
 def build_learned_rules(action_review_rows: list[dict[str, object]]) -> list[dict[str, object]]:
     learned: list[dict[str, object]] = []
     for row in action_review_rows:
+        row = ensure_action_review_contract(row)
         outcome = _clean_text(row.get("outcome"))
         if outcome not in {"初步有效", "有改善迹象", "暂未改善"}:
+            continue
+        review_outcome = _clean_text(row.get("review_outcome"))
+        score = _review_learning_score(row)
+        if outcome in {"初步有效", "有改善迹象"}:
+            if (
+                review_outcome != "effective"
+                or score <= 0
+                or not _truthy(row.get("promoted_conversion_improved"))
+                or _truthy(row.get("halo_only_conversion"))
+                or _truthy(row.get("target_sku_not_converted"))
+            ):
+                continue
+        if outcome == "暂未改善" and (review_outcome != "ineffective" or score > -2):
             continue
         learned.append(
             {
@@ -1978,10 +2953,10 @@ def _attribution_learning_summary(
     keyword_strategy_memory: Iterable[dict[str, object]],
 ) -> dict[str, object]:
     combined = list(action_review_rows or []) + list(keyword_action_review_rows or [])
-    halo_only_rows = [row for row in combined if bool(row.get("halo_only_conversion"))]
-    promoted_rows = [row for row in combined if bool(row.get("promoted_conversion_improved"))]
-    target_not_converted_rows = [row for row in combined if bool(row.get("target_sku_not_converted"))]
-    memory_halo_rows = [row for row in keyword_strategy_memory or [] if bool(row.get("halo_only_conversion"))]
+    halo_only_rows = [row for row in combined if _truthy(row.get("halo_only_conversion"))]
+    promoted_rows = [row for row in combined if _truthy(row.get("promoted_conversion_improved"))]
+    target_not_converted_rows = [row for row in combined if _truthy(row.get("target_sku_not_converted"))]
+    memory_halo_rows = [row for row in keyword_strategy_memory or [] if _truthy(row.get("halo_only_conversion"))]
     def _brief(row: dict[str, object]) -> dict[str, object]:
         return {
             "marketplace": row.get("marketplace"),
@@ -2036,17 +3011,25 @@ def build_autoopt_payload(
         )
         or datetime.now().date().isoformat()
     )
-    action_review_rows = build_action_review_rows(results, rows)
-    keyword_action_review_rows = build_keyword_action_review_rows(results, load_feedback_input(output_dir))
+    feedback_rows = load_feedback_input(output_dir)
+    action_review_rows = build_action_review_rows(
+        results,
+        _product_review_source_rows(rows, feedback_rows),
+        review_date=report_date,
+    )
+    keyword_action_review_rows = build_keyword_action_review_rows(
+        results,
+        feedback_rows,
+        review_date=report_date,
+    )
     learned_rules = build_learned_rules(action_review_rows)
-    manual_learning_rows = build_manual_learning_rows(load_feedback_input(output_dir))
+    manual_learning_rows = build_manual_learning_rows(feedback_rows)
     action_learning = build_action_learning_policy(
         output_dir,
         current_action_reviews=action_review_rows,
         current_keyword_reviews=keyword_action_review_rows,
     )
     runtime_policy = build_runtime_policy(output_dir)
-    feedback_rows = load_feedback_input(output_dir)
     keyword_strategy_memory = build_keyword_strategy_memory(
         output_dir,
         current_keyword_reviews=keyword_action_review_rows,
@@ -2084,6 +3067,8 @@ def build_autoopt_payload(
             seen_decision_keys.add(key)
             product_final_decisions.append(row)
     final_decision_payload = decision_summary(product_final_decisions)
+    summary = dict(adjustment_payload["summary"])
+    summary["report_date"] = report_date
     return {
         "report_date": report_date,
         "generated_at": _now_str(),
@@ -2106,7 +3091,7 @@ def build_autoopt_payload(
         "product_final_decisions": product_final_decisions,
         **final_decision_payload,
         **recommendation_guard,
-        "summary": adjustment_payload["summary"],
+        "summary": summary,
         "rule_adjustments": adjustment_payload["adjustments"],
         "action_adjustments": adjustment_payload["action_adjustments"],
     }
@@ -2122,6 +3107,12 @@ def write_autoopt_outputs(
     date_token = report_date.replace("-", "")
     json_path = directory / f"autoopt_log_{date_token}.json"
     xlsx_path = directory / f"autoopt_{date_token}.xlsx"
+
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        summary = dict(payload.get("summary") or {})
+        summary["report_date"] = report_date
+        payload["summary"] = summary
 
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -2244,6 +3235,7 @@ def write_autoopt_outputs(
                 "summary": payload.get("summary", {}) if isinstance(payload, dict) else {},
                 "rule_adjustments": payload.get("rule_adjustments", []) if isinstance(payload, dict) else [],
                 "action_adjustments": payload.get("action_adjustments", []) if isinstance(payload, dict) else [],
+                "action_review_rows": payload.get("action_review_rows", []) if isinstance(payload, dict) else [],
                 "keyword_action_review_rows": payload.get("keyword_action_review_rows", []) if isinstance(payload, dict) else [],
                 "learned_rules": payload.get("learned_rules", []) if isinstance(payload, dict) else [],
                 "manual_learning_rows": payload.get("manual_learning_rows", []) if isinstance(payload, dict) else [],
@@ -2260,6 +3252,8 @@ def write_autoopt_outputs(
                 "downgraded_recommendations": payload.get("downgraded_recommendations", []) if isinstance(payload, dict) else [],
                 "allowed_recommendations_with_memory": payload.get("allowed_recommendations_with_memory", []) if isinstance(payload, dict) else [],
                 "reused_success_patterns": payload.get("reused_success_patterns", []) if isinstance(payload, dict) else [],
+                "product_strategy_profiles": payload.get("product_strategy_profiles", []) if isinstance(payload, dict) else [],
+                "keyword_strategy_memory": payload.get("keyword_strategy_memory", []) if isinstance(payload, dict) else [],
                 "product_profile_updates": payload.get("product_profile_updates", []) if isinstance(payload, dict) else [],
                 "keyword_memory_updates": payload.get("keyword_memory_updates", []) if isinstance(payload, dict) else [],
                 "attribution_learning_summary": payload.get("attribution_learning_summary", {}) if isinstance(payload, dict) else {},

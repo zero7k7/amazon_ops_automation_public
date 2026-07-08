@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.market_survey_completeness import MARKET_SURVEY_COMPLETENESS_FIELDS
+from src.sellersprite_history import HISTORY_TREND_FIELDS
+
+
+PRODUCT_OPERATION_CARD_AD_ACTION_LIMIT = 4
+
 
 def _product_metric_lookup(shared: Any, analysis_payload: dict, window: str = "14d") -> dict[tuple[str, str, str], dict[str, object]]:
     marketplace = shared._infer_marketplace(analysis_payload)
@@ -35,24 +41,45 @@ def _first_product_row(shared: Any, rows: list[dict[str, object]]) -> dict[str, 
     return rows[0] if rows else {}
 
 
+def _operation_has_external_evidence(row: dict[str, object]) -> bool:
+    evidence_fields = [
+        "frontend_status",
+        "frontend_search_status",
+        "seller_sprite_check_status",
+        "competitor_discovery_status",
+        "competitor_pool_status",
+        "competitor_sellersprite_status",
+        "amazon_search_validation_status",
+        "product_level_conclusion",
+        "competitor_keyword_pressure",
+        "market_survey_completeness_level",
+        "market_survey_decision_evidence_tier",
+    ]
+    weak_values = {"", "无缓存", "待补", "未入本轮队列", "卖家精灵证据不足", "竞品证据不足"}
+    return any(str(row.get(field) or "").strip() not in weak_values for field in evidence_fields)
+
+
 def _operation_card_sort_key(shared: Any, row: dict[str, object]) -> tuple[int, str, str]:
     del shared
     final = str(row.get("final_decision") or "")
     issue = str(row.get("fusion_issue_type") or "")
     inventory = str(row.get("inventory_constraint") or "")
     has_pending_ad = bool(row.get("ad_action_items"))
+    has_external_evidence = _operation_has_external_evidence(row)
     if final == "DATA_INSUFFICIENT" or "cost_blocked" in str(row.get("fusion_action_gate") or ""):
         rank = 0
     elif final == "FRONTEND_FIRST" or "前台" in issue:
         rank = 1
-    elif has_pending_ad or final == "EXECUTE_TODAY":
+    elif has_external_evidence:
         rank = 2
-    elif final == "WAIT_REVIEW":
+    elif has_pending_ad or final == "EXECUTE_TODAY":
         rank = 3
-    elif inventory in {"OUT_OF_STOCK", "LOW_STOCK", "RESTOCK_RECOVERY"}:
+    elif final == "WAIT_REVIEW":
         rank = 4
-    else:
+    elif inventory in {"OUT_OF_STOCK", "LOW_STOCK", "RESTOCK_RECOVERY"}:
         rank = 5
+    else:
+        rank = 6
     return rank, str(row.get("marketplace") or ""), str(row.get("product_name") or "")
 
 
@@ -78,7 +105,10 @@ def _build_ad_diagnostic_summary(shared: Any, card: dict[str, object]) -> str:
     if "前台" in issue and (clicks14 >= 10 or spend14 >= 5):
         return f"广告有样本，近14天点击 {int(clicks14)}、广告单 {int(orders14)}、总单 {int(total14)}；前台弱势时只做止损，不加价不加预算。"
     if gate == "tighten_ads_first" or action_count:
-        return f"广告端优先，近14天点击 {int(clicks14)}、广告单 {int(orders14)}、近7天广告单 {int(orders7)}；卡内 {action_count} 条词级/ASIN 止损项按广告证据执行。"
+        more_count = int(shared._to_float(card.get("ad_action_more_count")) or 0)
+        limit = int(shared._to_float(card.get("ad_action_display_limit")) or PRODUCT_OPERATION_CARD_AD_ACTION_LIMIT)
+        more_text = f"，页面预览前 {limit} 条，另有 {more_count} 条见广告工作台" if more_count > 0 else ""
+        return f"广告端优先，近14天点击 {int(clicks14)}、广告单 {int(orders14)}、近7天广告单 {int(orders7)}；产品卡记录 {action_count} 条词级/ASIN 止损项按广告证据执行{more_text}。"
     if orders14 > 0:
         return f"广告已有成交，近14天广告单 {int(orders14)}、总单 {int(total14)}；加价只看词级真实出单和 ACOS，不用产品级订单直接追高。"
     if clicks14 < 5 and spend14 < 5:
@@ -162,6 +192,27 @@ def _build_operation_main_reason(shared: Any, card: dict[str, object]) -> str:
     if frontend_bits:
         parts.append("前台：" + "；".join(frontend_bits[:2]))
 
+    seller_bits: list[str] = []
+    seller_today_status = str(card.get("sellersprite_today_status") or "").strip()
+    seller_cache_date = str(card.get("sellersprite_cache_date") or "").strip()
+    seller_trend = str(card.get("sellersprite_trend_status") or "").strip()
+    seller_persistent = str(card.get("sellersprite_persistent_keywords") or "").strip()
+    seller_stable_competitors = str(card.get("competitor_stable_asins") or "").strip()
+    seller_pressure_trend = str(card.get("competitor_pressure_trend") or "").strip()
+    if seller_today_status:
+        cache_part = f" {seller_cache_date}" if seller_today_status == "沿用缓存" and seller_cache_date else ""
+        seller_bits.append(f"{seller_today_status}{cache_part}")
+    if seller_trend:
+        seller_bits.append(seller_trend)
+    if seller_persistent:
+        seller_bits.append(f"连续词 {seller_persistent}")
+    if seller_stable_competitors:
+        seller_bits.append(f"稳定竞品 {seller_stable_competitors}")
+    if seller_pressure_trend and seller_pressure_trend != "无趋势":
+        seller_bits.append(f"压力趋势 {seller_pressure_trend}")
+    if seller_bits:
+        parts.append("卖家精灵：" + "；".join(seller_bits[:4]))
+
     history = str(card.get("feedback_cooldown_status") or card.get("keyword_memory_summary") or "").strip()
     if history:
         parts.append(f"历史：{history}")
@@ -209,7 +260,8 @@ def _build_product_operation_cards(
             row
             for row in search_by_key.get(key, [])
             if str(row.get("suggested_action") or row.get("scale_action") or "") not in {"", "观察", "保留", "小样本保留观察"}
-        ][:4]
+        ]
+        ad_action_more_count = max(0, len(ad_items) - PRODUCT_OPERATION_CARD_AD_ACTION_LIMIT)
         frontend = _first_product_row(shared, frontend_by_key.get(key, []))
         inventory = _first_product_row(shared, inventory_by_key.get(key, []))
         source = decision or product14 or _first_product_row(shared, tasks) or frontend or inventory
@@ -244,13 +296,70 @@ def _build_product_operation_cards(
             "frontend_search_status": frontend.get("frontend_search_status") or "",
             "frontend_search_findings": frontend.get("frontend_search_findings") or "",
             "frontend_search_result_count": frontend.get("frontend_search_result_count") or "",
-            "frontend_search_partial_evidence": bool(frontend.get("frontend_search_partial_evidence")),
+            "frontend_search_partial_evidence": shared.boolish_flag(frontend.get("frontend_search_partial_evidence")),
             "frontend_evidence_tier": frontend.get("frontend_evidence_tier") or "",
+            "frontend_evidence_display_tier": frontend.get("frontend_evidence_display_tier") or "",
+            "frontend_decision_evidence_tier": frontend.get("frontend_decision_evidence_tier")
+            or frontend.get("frontend_evidence_display_tier")
+            or frontend.get("frontend_evidence_tier")
+            or "",
+            "frontend_evidence_is_strong": shared.boolish_flag(frontend.get("frontend_evidence_is_strong")),
+            "frontend_cache_used": shared.boolish_flag(frontend.get("frontend_cache_used")),
             "frontend_evidence_audit_summary": frontend.get("frontend_evidence_audit_summary") or "",
             "frontend_evidence_audit_detail": frontend.get("frontend_evidence_audit_detail") or "",
             "frontend_evidence_audit_reasons": frontend.get("frontend_evidence_audit_reasons") or [],
+            "product_level_conclusion": decision.get("product_level_conclusion") or frontend.get("product_level_conclusion") or "",
+            "product_ad_boundary": decision.get("product_ad_boundary") or frontend.get("product_ad_boundary") or "",
+            "final_ad_allowed_actions": decision.get("final_ad_allowed_actions") or frontend.get("final_ad_allowed_actions") or [],
+            "final_ad_blocked_actions": decision.get("final_ad_blocked_actions") or frontend.get("final_ad_blocked_actions") or [],
+            "seller_sprite_check_status": decision.get("seller_sprite_check_status") or frontend.get("seller_sprite_check_status") or "",
+            "seller_sprite_keyword_count": decision.get("seller_sprite_keyword_count") or frontend.get("seller_sprite_keyword_count") or "",
+            "own_sellersprite_keywords": decision.get("own_sellersprite_keywords") or frontend.get("own_sellersprite_keywords") or "",
+            "competitor_discovery_status": decision.get("competitor_discovery_status") or frontend.get("competitor_discovery_status") or "",
+            "competitor_discovery_error": decision.get("competitor_discovery_error") or frontend.get("competitor_discovery_error") or "",
+            "competitor_discovery_source_page": decision.get("competitor_discovery_source_page") or frontend.get("competitor_discovery_source_page") or "",
+            "competitor_discovery_source": decision.get("competitor_discovery_source") or frontend.get("competitor_discovery_source") or "",
+            "competitor_pool_status": decision.get("competitor_pool_status") or frontend.get("competitor_pool_status") or "",
+            "competitor_pool_asins": decision.get("competitor_pool_asins") or frontend.get("competitor_pool_asins") or "",
+            "competitor_pool_count": decision.get("competitor_pool_count") or frontend.get("competitor_pool_count") or "",
+            "competitor_pool_confidence": decision.get("competitor_pool_confidence") or frontend.get("competitor_pool_confidence") or "",
+            "main_competitor_asins": decision.get("main_competitor_asins") or frontend.get("main_competitor_asins") or "",
+            "main_competitor_count": decision.get("main_competitor_count") or frontend.get("main_competitor_count") or "",
+            "reference_competitor_asins": decision.get("reference_competitor_asins") or frontend.get("reference_competitor_asins") or "",
+            "reference_competitor_count": decision.get("reference_competitor_count") or frontend.get("reference_competitor_count") or "",
+            "competitor_comparability_score": decision.get("competitor_comparability_score") or frontend.get("competitor_comparability_score") or "",
+            "competitor_spec_match_status": decision.get("competitor_spec_match_status") or frontend.get("competitor_spec_match_status") or "",
+            "competitor_price_band_status": decision.get("competitor_price_band_status") or frontend.get("competitor_price_band_status") or "",
+            "competitor_review_tier_status": decision.get("competitor_review_tier_status") or frontend.get("competitor_review_tier_status") or "",
+            "competitor_stability_days": decision.get("competitor_stability_days") or frontend.get("competitor_stability_days") or "",
+            "scalable_evidence_status": decision.get("scalable_evidence_status") or frontend.get("scalable_evidence_status") or "",
+            "scalable_blockers": decision.get("scalable_blockers") or frontend.get("scalable_blockers") or "",
+            "scalable_allowed_actions": decision.get("scalable_allowed_actions") or frontend.get("scalable_allowed_actions") or "",
+            "competitor_overlap_keywords": decision.get("competitor_overlap_keywords") or frontend.get("competitor_overlap_keywords") or "",
+            "competitor_source_keywords": decision.get("competitor_source_keywords") or frontend.get("competitor_source_keywords") or "",
+            "competitor_rejected_count": decision.get("competitor_rejected_count") or frontend.get("competitor_rejected_count") or "",
+            "competitor_rejection_reasons": decision.get("competitor_rejection_reasons") or frontend.get("competitor_rejection_reasons") or "",
+            "competitor_sellersprite_keywords": decision.get("competitor_sellersprite_keywords") or frontend.get("competitor_sellersprite_keywords") or "",
+            "competitor_shared_keywords": decision.get("competitor_shared_keywords") or frontend.get("competitor_shared_keywords") or "",
+            "own_missing_competitor_keywords": decision.get("own_missing_competitor_keywords") or frontend.get("own_missing_competitor_keywords") or "",
+            "own_ad_terms_not_in_sellersprite": decision.get("own_ad_terms_not_in_sellersprite") or frontend.get("own_ad_terms_not_in_sellersprite") or "",
+            "competitor_frontend_status": decision.get("competitor_frontend_status") or frontend.get("competitor_frontend_status") or "",
+            "competitor_frontend_asins": decision.get("competitor_frontend_asins") or frontend.get("competitor_frontend_asins") or "",
+            "competitor_frontend_count": decision.get("competitor_frontend_count") or frontend.get("competitor_frontend_count") or "",
+            "comparable_competitor_count": decision.get("comparable_competitor_count") or frontend.get("comparable_competitor_count") or "",
+            "amazon_search_validation_status": decision.get("amazon_search_validation_status") or frontend.get("amazon_search_validation_status") or "",
+            "amazon_search_visible_competitors": decision.get("amazon_search_visible_competitors") or frontend.get("amazon_search_visible_competitors") or "",
+            "competitor_sellersprite_status": decision.get("competitor_sellersprite_status") or frontend.get("competitor_sellersprite_status") or "",
+            "competitor_sellersprite_asin_count": decision.get("competitor_sellersprite_asin_count") or frontend.get("competitor_sellersprite_asin_count") or "",
+            "competitor_sellersprite_keyword_count": decision.get("competitor_sellersprite_keyword_count") or frontend.get("competitor_sellersprite_keyword_count") or "",
+            "competitor_keyword_pressure": decision.get("competitor_keyword_pressure") or frontend.get("competitor_keyword_pressure") or "",
+            "frontend_competitiveness": decision.get("frontend_competitiveness") or frontend.get("frontend_competitiveness") or "",
+            **{field: decision.get(field) or frontend.get(field) or "" for field in MARKET_SURVEY_COMPLETENESS_FIELDS},
+            **{field: decision.get(field) or frontend.get(field) or "" for field in HISTORY_TREND_FIELDS},
             "ad_action_items": ad_items,
             "ad_action_count": len(ad_items),
+            "ad_action_display_limit": PRODUCT_OPERATION_CARD_AD_ACTION_LIMIT,
+            "ad_action_more_count": ad_action_more_count,
             "cost_status": cost_task.get("primary_reason") or "",
             "cost_key_evidence": cost_task.get("key_evidence") or "",
             "task_priority": min((shared.PRIORITY_ORDER.get(str(row.get("priority") or "P2"), 2) for row in tasks), default=2),

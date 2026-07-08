@@ -32,18 +32,22 @@ NEGATIVE_KEYWORD_PATTERNS = [
     "picnic",
 ]
 CORE_RELEVANT_TERM_PATTERNS = [
-    "desk lamp",
+    "dimmer desk lamp",
     "led desk lamp",
-    "reading lamp",
-    "notebook",
-    "spiral notebook",
-    "ruled notebook",
+    "dimmer switch",
+    "desk lamp",
+    "metal desk lamp",
+    "desk mat",
+    "hot pans",
+    "metal desk mat",
+    "bin bags",
     "cable ties",
-    "reusable cable ties",
-    "wire ties",
+    "cable bags",
+    "spiral notebook",
+    "stationery notebook",
 ]
-COMPETITOR_OR_BRAND_PATTERNS = ["demo competitor", "example brand"]
-BROAD_GENERIC_PATTERNS = ["office", "lamp", "notebook", "stationery", "cable", "wire", "desk"]
+COMPETITOR_OR_BRAND_PATTERNS = ["demobrand", "demobrand"]
+BROAD_GENERIC_PATTERNS = ["wood", "metal", "kitchen", "board", "bags", "storage"]
 IRRELEVANT_TERM_MIN_CLICKS = 3
 IRRELEVANT_TERM_MIN_SPEND = 1.5
 SECTION_LIMITS = {
@@ -744,6 +748,68 @@ def _build_product_window_metrics(views: HistoricalViews) -> dict[str, list[dict
             )
         payload[f"{days}d"] = rows
     return payload
+
+
+REVIEW_PRODUCT_DAILY_FIELDS = [
+    "date",
+    "marketplace",
+    "sku",
+    "asin",
+    "product_name",
+    "clicks",
+    "spend",
+    "ad_orders",
+    "ad_sales",
+    "promoted_ad_orders",
+    "promoted_ad_sales",
+    "halo_ad_orders",
+    "halo_ad_sales",
+    "total_orders",
+    "total_sales",
+    "natural_orders",
+    "available_stock",
+    "target_acos",
+]
+REVIEW_SEARCH_TERM_DAILY_FIELDS = [
+    "date",
+    "marketplace",
+    "sku",
+    "asin",
+    "product_name",
+    "search_term",
+    "campaign_name",
+    "targeting",
+    "matched_target",
+    "match_type",
+    "clicks",
+    "spend",
+    "ad_orders",
+    "ad_sales",
+    "promoted_ad_orders",
+    "promoted_ad_sales",
+    "halo_ad_orders",
+    "halo_ad_sales",
+]
+
+
+def _review_daily_records(frame: pd.DataFrame, fields: list[str]) -> list[dict]:
+    if frame.empty:
+        return []
+    available_fields = [field for field in fields if field in frame.columns]
+    if not available_fields:
+        return []
+    export = frame[available_fields].copy()
+    if "date" in export.columns:
+        export["date"] = pd.to_datetime(export["date"]).dt.date.astype(str)
+    records: list[dict] = []
+    for record in export.to_dict(orient="records"):
+        records.append(
+            {
+                key: (None if pd.isna(value) else _round_metric(value, 4) if isinstance(value, float) else value)
+                for key, value in record.items()
+            }
+        )
+    return records
 
 
 def _build_unsold_risks(dataset: DailyDataset, views: HistoricalViews) -> list[dict]:
@@ -1509,6 +1575,8 @@ def build_analysis_payload(report_date: date, source_files: dict[str, str], data
         },
         "产品汇总": product_summary,
         "product_window_metrics": _build_product_window_metrics(views),
+        "review_product_daily": _review_daily_records(views.product_history, REVIEW_PRODUCT_DAILY_FIELDS),
+        "review_search_term_daily": _review_daily_records(views.search_term_history, REVIEW_SEARCH_TERM_DAILY_FIELDS),
         "广告活动汇总": campaign_summary,
         "搜索词分析": search_term_summary,
         "异常提醒": anomalies,

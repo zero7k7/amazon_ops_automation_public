@@ -63,8 +63,109 @@ def _value_list(value: object) -> list[str]:
     return _shared()._value_list(value)
 
 
+def _boolish(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "是", "已验证"}
+
+
+_MARKET_SURVEY_LEVEL_LABELS = {
+    "complete": "完整",
+    "usable": "可用",
+    "insufficient": "待补",
+    "failed": "失败",
+}
+
+_SELLERSPRITE_SOURCE_LABELS = {
+    "amazon_search_seed": "搜索页种子",
+    "amazon_search_visible": "搜索页可见",
+    "sellersprite_keyword_overlap": "共同词",
+    "sellersprite_reverse_seed": "反查种子",
+    "sellersprite_direct": "直接竞品",
+    "sellersprite_competitor_direct": "直接竞品",
+    "sellersprite_reversing_sources": "反查来源",
+}
+
+_CONFIDENCE_LABELS = {
+    "high": "置信高",
+    "medium": "置信中",
+    "low": "置信低",
+    "unknown": "",
+}
+
+
+def _market_survey_level_label(value: object) -> str:
+    text = str(value or "").strip()
+    return _MARKET_SURVEY_LEVEL_LABELS.get(text.lower(), text)
+
+
+def _compact_unique_labels(values: list[object], labeler: Callable[[object], str]) -> str:
+    labels: list[str] = []
+    for value in values:
+        label = labeler(value)
+        if label and label not in labels:
+            labels.append(label)
+    return " / ".join(labels)
+
+
+def _seller_source_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    separators = ["、", ",", "，"]
+    parts = [text]
+    for separator in separators:
+        if separator in text:
+            parts = [part.strip() for part in re.split(r"[、,，]", text) if part.strip()]
+            break
+    labels = [_SELLERSPRITE_SOURCE_LABELS.get(part, part) for part in parts]
+    return "、".join(label for label in labels if label)
+
+
+def _confidence_label(value: object) -> str:
+    text = str(value or "").strip()
+    return _CONFIDENCE_LABELS.get(text.lower(), text)
+
+
 def _first_present(row: dict[str, object], *fields: str) -> object:
     return _shared()._first_present(row, *fields)
+
+
+def _product_decision_contract_attrs(row: dict[str, object]) -> str:
+    def list_attr(values: object) -> str:
+        if isinstance(values, (list, tuple, set)):
+            return "|".join(str(item).strip() for item in values if str(item).strip())
+        return str(values or "").strip()
+
+    def bool_attr(value: object) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        text = str(value or "").strip().lower()
+        return "true" if text in {"1", "true", "yes", "y", "是", "已验证"} else "false"
+
+    attrs = {
+        "data-product-decision-final": row.get("final_decision") or "",
+        "data-product-decision-label": row.get("final_decision_label") or "",
+        "data-product-allowed-actions": list_attr(row.get("today_allowed_actions")),
+        "data-product-blocked-actions": list_attr(row.get("today_blocked_actions")),
+        "data-product-frontend-tier": row.get("frontend_evidence_tier") or "",
+        "data-product-frontend-display-tier": row.get("frontend_evidence_display_tier")
+        or row.get("frontend_evidence_tier")
+        or "",
+        "data-product-frontend-decision-tier": row.get("frontend_decision_evidence_tier")
+        or row.get("frontend_evidence_display_tier")
+        or row.get("frontend_evidence_tier")
+        or "",
+        "data-product-frontend-strong": bool_attr(row.get("frontend_evidence_is_strong")),
+        "data-product-market-survey-score": row.get("market_survey_completeness_score") or "",
+        "data-product-market-survey-level": row.get("market_survey_completeness_level") or "",
+        "data-product-market-survey-tier": row.get("market_survey_decision_evidence_tier") or "",
+    }
+    return "".join(
+        f' {name}="{html.escape(str(value), quote=True)}"'
+        for name, value in attrs.items()
+        if str(value).strip()
+    )
 
 
 def _num_from_text(value: object) -> float:
@@ -106,7 +207,7 @@ def _render_task_brief_blocks(row: dict[str, object], fallback_action: str) -> s
 def _display_review_instruction(value: object) -> tuple[str, str]:
     text = str(value or "").strip()
     if "补齐 7 天窗口" in text and "刷新前台" in text:
-        return ("再判断条件", "先不做强操作。等满 7 天数据，或刷新到可用前台证据后，再重新判断。")
+        return ("补证后复查", "满 7 天或前台证据可用后再定动作。")
     return ("复查时间", text or "3-7 天复查广告点击、花费、订单和转化。")
 
 
@@ -414,6 +515,15 @@ def _first_semicolon_item(text: object, fallback: str = "暂无") -> str:
 def _compact_semicolon_items(text: object, fallback: str = "暂无", limit: int = 2) -> str:
     items = [item.strip() for item in str(text or "").split("；") if item.strip() and item.strip() != "N/A"]
     return "；".join(items[:limit]) if items else fallback
+
+
+def _compact_keyword_items(text: object, fallback: str = "", limit: int = 1) -> str:
+    items = [
+        item.strip()
+        for item in re.split(r"[；、,]", str(text or ""))
+        if item.strip() and item.strip() != "N/A"
+    ]
+    return "、".join(items[:limit]) if items else fallback
 
 
 def _listing_basis_label(row: dict[str, str]) -> str:
@@ -760,14 +870,14 @@ def _render_product_final_decision_cards(rows: list[dict[str, str]], limit: int 
     if not rows:
         return '<p class="subtle">当前没有生成产品最终决策。</p>'
     action_labels = {
-        "bid_up": "允许加竞价",
-        "bid_down": "允许降竞价",
-        "broad_scale": "允许放量",
-        "budget_up": "允许加预算",
-        "create_exact_low_budget": "允许低预算精准测试",
-        "negative_exact": "允许否定精准",
+        "bid_up": "小幅加竞价",
+        "bid_down": "降竞价",
+        "broad_scale": "放量",
+        "budget_up": "加预算",
+        "create_exact_low_budget": "低预算精准测试",
+        "negative_exact": "否定精准",
         "observe": "只观察，不操作",
-        "pause": "允许暂停",
+        "pause": "暂停",
     }
     blocked_action_labels = {
         "bid_up": "拦截加竞价",
@@ -783,11 +893,19 @@ def _render_product_final_decision_cards(rows: list[dict[str, str]], limit: int 
     def action_text(values: object, fallback: str, labels_by_action: dict[str, str]) -> str:
         if not isinstance(values, list):
             return str(values or fallback)
-        labels = [labels_by_action.get(str(item), str(item)) for item in values[:4]]
+        labels = [labels_by_action.get(str(item), str(item)) for item in values if str(item)]
         return " / ".join(labels) if labels else fallback
+
+    def list_text(values: object) -> str:
+        if isinstance(values, list):
+            return "；".join(str(item) for item in values[:4] if str(item).strip())
+        return str(values or "").strip()
 
     parts = ['<div class="action-grid">']
     for row in rows[:limit]:
+        marketplace = str(row.get("marketplace") or "").strip()
+        sku = str(row.get("sku") or "").strip()
+        asin = str(row.get("asin") or "").strip().upper()
         label, label_title = _operation_decision_display(row)
         decision = str(row.get("final_decision") or "")
         if decision in {"DATA_INSUFFICIENT", "DO_NOT_TOUCH"}:
@@ -804,18 +922,70 @@ def _render_product_final_decision_cards(rows: list[dict[str, str]], limit: int 
         blocked_text = action_text(row.get("today_blocked_actions") or [], "无", blocked_action_labels)
         allowed_text = action_text(row.get("today_allowed_actions") or [], "只观察，不操作", action_labels)
         next_review = str(row.get("next_review_date") or "")
+        frontend_gate_bits = [
+            str(row.get("frontend_check_status") or ""),
+            str(row.get("frontend_evidence_display_tier") or row.get("frontend_evidence_tier") or ""),
+        ]
+        blocking_reason_text = list_text(row.get("frontend_blocking_reasons"))
+        audit_detail = str(row.get("frontend_evidence_audit_detail") or "").strip()
+        if not audit_detail:
+            audit_detail = list_text(row.get("frontend_evidence_audit_reasons"))
+        if audit_detail:
+            frontend_gate_bits.append(audit_detail)
+        def market_score_number(value: object) -> int:
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return 0
+
+        amazon_total = (
+            market_score_number(row.get("amazon_product_page_completeness"))
+            + market_score_number(row.get("amazon_search_page_completeness"))
+        )
+        competitor_total = (
+            market_score_number(row.get("sellersprite_competitor_pool_completeness"))
+            + market_score_number(row.get("sellersprite_competitor_reverse_completeness"))
+        )
+        market_bits = [
+            f"完整度 {row.get('market_survey_completeness_score')}/100" if row.get("market_survey_completeness_score") not in (None, "") else "",
+            f"等级 {_market_survey_level_label(row.get('market_survey_completeness_level'))}" if row.get("market_survey_completeness_level") else "",
+            f"证据层级 {_market_survey_level_label(row.get('market_survey_decision_evidence_tier'))}" if row.get("market_survey_decision_evidence_tier") else "",
+            f"Amazon 前台完整度 {amazon_total}/35" if row.get("amazon_product_page_completeness") not in (None, "") or row.get("amazon_search_page_completeness") not in (None, "") else "",
+            f"卖家精灵完整度 {market_score_number(row.get('sellersprite_own_completeness'))}/20" if row.get("sellersprite_own_completeness") not in (None, "") else "",
+            f"竞品完整度 {competitor_total}/30" if row.get("sellersprite_competitor_pool_completeness") not in (None, "") or row.get("sellersprite_competitor_reverse_completeness") not in (None, "") else "",
+            f"趋势完整度 {market_score_number(row.get('sellersprite_trend_completeness'))}/10" if row.get("sellersprite_trend_completeness") not in (None, "") else "",
+            f"缺口 {row.get('market_survey_missing_parts')}" if row.get("market_survey_missing_parts") else "",
+            f"补抓 {row.get('market_survey_recommended_fetch_steps')}" if row.get("market_survey_recommended_fetch_steps") else "",
+        ]
+        market_text = "；".join(bit for bit in market_bits if bit)
+        search_status = str(row.get("frontend_search_status") or "").strip()
+        search_partial = _boolish(row.get("frontend_search_partial_evidence")) or search_status == "已读取部分结果"
+        if search_partial:
+            frontend_gate_bits.append(f"搜索页：{search_status or '部分读取'}")
+        elif search_status:
+            frontend_gate_bits.append(f"搜索页：{search_status}")
+        frontend_gate_text = "；".join(bit for bit in frontend_gate_bits if bit)
         parts.append(
             "\n".join(
                 [
-                    '<article class="work-card">',
+                    (
+                        '<article class="work-card"'
+                        f' data-product-decision-marketplace="{html.escape(marketplace, quote=True)}"'
+                        f' data-product-decision-sku="{html.escape(sku, quote=True)}"'
+                        f' data-product-decision-asin="{html.escape(asin, quote=True)}"'
+                        f'{_product_decision_contract_attrs(row)}>'
+                    ),
                     '<div class="card-head">',
                     '<div>',
-                    f'<h3 class="card-title">{html.escape(str(row.get("marketplace") or ""))}｜{html.escape(str(row.get("product_name") or row.get("asin") or "N/A"))}</h3>',
+                    f'<h3 class="card-title">{html.escape(marketplace)}｜{html.escape(str(row.get("product_name") or row.get("asin") or "N/A"))}</h3>',
                     f'<div class="card-meta">{_product_meta_html(row)}</div>',
                     '</div>',
                     f'<span class="{tag}" title="{html.escape(label_title)}">{html.escape(label)}</span>',
                     '</div>',
                     f'<div class="card-block"><strong>决策原因</strong><p>{_inline_markup(str(row.get("decision_reason") or row.get("ad_action_summary") or "N/A"))}</p></div>',
+                    (f'<div class="card-block"><strong>市场调查完整度</strong><p>{_inline_markup(market_text)}</p></div>' if market_text else ''),
+                    (f'<div class="card-block"><strong>前台门禁</strong><p>{_inline_markup(frontend_gate_text)}</p></div>' if frontend_gate_text else ''),
+                    (f'<div class="card-block"><strong>阻断原因</strong><p>{_inline_markup(blocking_reason_text)}</p></div>' if blocking_reason_text else ''),
                     f'<div class="card-block"><strong>门禁放行动作</strong><p>{_inline_markup(allowed_text or "只观察，不操作")}</p></div>',
                     f'<div class="card-block"><strong>门禁拦截动作</strong><p>{_inline_markup(blocked_text or "无")}</p></div>',
                     (f'<div class="card-block"><strong>下次复查</strong><p>{html.escape(next_review)}</p></div>' if next_review else ''),
@@ -851,11 +1021,10 @@ def _format_operation_metric(value: object, marketplace: object = "", kind: str 
         return str(value)
     return str(int(number)) if number == int(number) else f"{number:.1f}"
 
-
 def _action_list_text(values: object, labels: dict[str, str]) -> str:
     if isinstance(values, list):
         items = [labels.get(str(item), str(item)) for item in values if str(item)]
-        return " / ".join(items[:5]) if items else "无"
+        return " / ".join(items) if items else "无"
     text = str(values or "").strip()
     if not text:
         return "无"
@@ -890,6 +1059,9 @@ def _render_operation_ad_actions(rows: list[dict[str, str]]) -> str:
                 ]
             )
         )
+    hidden_count = max(0, len(rows) - 4)
+    if hidden_count:
+        parts.append(f'<p class="subtle">另有 {hidden_count} 条广告动作见广告工作台。</p>')
     parts.append("</div>")
     return "".join(parts)
 
@@ -897,16 +1069,550 @@ def _render_operation_ad_actions(rows: list[dict[str, str]]) -> str:
 def _render_frontend_coverage_strip(summary: dict[str, object]) -> str:
     if not summary:
         return ""
+    total = html.escape(str(summary.get("frontend_queue_total", 0)))
+    raw_total = str(summary.get("frontend_queue_total", 0))
+    amazon_validation_count = str(
+        summary.get(
+            "frontend_amazon_search_validation_count",
+            summary.get("frontend_competitor_search_success_count", 0),
+        )
+        or 0
+    )
+    amazon_validation_label = str(
+        summary.get("frontend_amazon_search_validation_label") or f"{amazon_validation_count}/{raw_total}"
+    )
+    scalable_strong_count = str(summary.get("frontend_scalable_strong_count", 0) or 0)
+    scalable_strong_label = str(summary.get("frontend_scalable_strong_label") or f"0/{raw_total}")
+    market_average_label = str(summary.get("market_survey_average_score_label") or f'{summary.get("market_survey_average_score", 0)}/100')
+    market_complete_label = str(summary.get("market_survey_complete_label") or f'{summary.get("market_survey_complete_count", 0)}/{raw_total}')
+    market_usable_label = str(summary.get("market_survey_usable_label") or f'{summary.get("market_survey_usable_count", 0)}/{raw_total}')
+    market_insufficient_label = str(summary.get("market_survey_insufficient_label") or f'{summary.get("market_survey_insufficient_count", 0)}/{raw_total}')
+    market_failed_label = str(summary.get("market_survey_failed_label") or f'{summary.get("market_survey_failed_count", 0)}/{raw_total}')
+    market_complete_count = int(float(summary.get("market_survey_complete_count", 0) or 0))
+    market_insufficient_count = int(float(summary.get("market_survey_insufficient_count", 0) or 0))
+    market_failed_count = int(float(summary.get("market_survey_failed_count", 0) or 0))
+    own_sellersprite_today_label = str(
+        summary.get("frontend_own_sellersprite_today_label")
+        or (
+            f'今日 {summary.get("frontend_own_sellersprite_today_count", 0)}/{raw_total}，'
+            f'缓存 {summary.get("frontend_own_sellersprite_cache_count", 0)}/{raw_total}'
+        )
+    )
+    competitor_pool_freshness_label = str(
+        summary.get("frontend_competitor_pool_freshness_label")
+        or (
+            f'今日 {summary.get("frontend_competitor_pool_today_count", 0)}/{raw_total}，'
+            f'7天缓存 {summary.get("frontend_competitor_pool_cache_count", 0)}/{raw_total}'
+        )
+    )
+    competitor_sellersprite_freshness_label = str(
+        summary.get("frontend_competitor_sellersprite_freshness_label")
+        or (
+            f'今日 {summary.get("frontend_competitor_sellersprite_today_count", 0)}/{raw_total}，'
+            f'缓存 {summary.get("frontend_competitor_sellersprite_cache_count", 0)}/{raw_total}'
+        )
+    )
+    items = [
+        (
+            "市场调查平均完整度",
+            html.escape(market_average_label),
+            "综合商品页、搜索页、卖家精灵和趋势",
+            "pass" if market_complete_count else "info",
+        ),
+        (
+            "强证据 / 可用证据",
+            html.escape(f"{market_complete_label} / {market_usable_label}"),
+            "强操作 / 背景止损",
+            "info",
+        ),
+        (
+            "产品页成功",
+            html.escape(str(summary.get("frontend_product_page_success_label") or f'{summary.get("frontend_live_success_count", 0)}/{total}')),
+            "自己产品页",
+            "pass" if str(summary.get("frontend_product_page_success_count", summary.get("frontend_live_success_count", 0))) != "0" else "muted",
+        ),
+        (
+            "卖家精灵自己 ASIN",
+            html.escape(
+                str(
+                    own_sellersprite_today_label
+                    or summary.get("frontend_own_sellersprite_label")
+                    or f'{summary.get("frontend_own_sellersprite_count", 0)}/{total}'
+                )
+            ),
+            "今日抓取 / 沿用缓存",
+            "info" if str(summary.get("frontend_own_sellersprite_count", 0)) != "0" else "muted",
+        ),
+        (
+            "卖家精灵趋势",
+            html.escape(str(summary.get("frontend_sellersprite_trend_ready_label") or f'{summary.get("frontend_sellersprite_trend_ready_count", 0)}/{total}')),
+            "3天或7天趋势",
+            "info" if str(summary.get("frontend_sellersprite_trend_ready_count", 0)) != "0" else "muted",
+        ),
+        (
+            "卖家精灵竞品发现",
+            html.escape(str(summary.get("frontend_competitor_discovery_label") or f'{summary.get("frontend_competitor_discovery_count", 0)}/{total}')),
+            "直达页面发现主竞品",
+            "info" if str(summary.get("frontend_competitor_discovery_count", 0)) != "0" else "muted",
+        ),
+        (
+            "卖家精灵竞品池",
+            html.escape(
+                str(
+                    competitor_pool_freshness_label
+                    or summary.get("frontend_competitor_pool_label")
+                    or f'{summary.get("frontend_competitor_pool_count", 0)}/{total}'
+                )
+            ),
+            "今日快照 / 7天缓存",
+            "info" if str(summary.get("frontend_competitor_pool_count", 0)) != "0" else "muted",
+        ),
+        (
+            "竞品 ASIN 反查",
+            html.escape(
+                str(
+                    competitor_sellersprite_freshness_label
+                    or summary.get("frontend_competitor_sellersprite_label")
+                    or f'{summary.get("frontend_competitor_sellersprite_count", 0)}/{total}，'
+                    f'{summary.get("frontend_competitor_sellersprite_asin_count", 0)} ASIN'
+                )
+            ),
+            "竞品 ASIN 反查",
+            "info" if str(summary.get("frontend_competitor_sellersprite_count", 0)) != "0" else "muted",
+        ),
+        (
+            "Amazon 搜索页辅助验证",
+            html.escape(amazon_validation_label if amazon_validation_count != "0" else "未跑"),
+            html.escape("只验证重点词可见性" if amazon_validation_count != "0" else f"{amazon_validation_label}，只在重点词补证"),
+            "info" if amazon_validation_count != "0" else "muted",
+        ),
+        (
+            "达到放量准入",
+            html.escape(scalable_strong_label if scalable_strong_count != "0" else "暂无"),
+            html.escape("同时满足前台和反查" if scalable_strong_count != "0" else f"{scalable_strong_label}，不建议放量"),
+            "pass" if scalable_strong_count != "0" else "muted",
+        ),
+        (
+            "弱势止损证据",
+            html.escape(str(summary.get("frontend_weak_defensive_label") or f'{summary.get("frontend_weak_defensive_count", 0)}/{total}')),
+            "优先控费",
+            "warn" if str(summary.get("frontend_weak_defensive_count", 0)) != "0" else "muted",
+        ),
+        (
+            "证据不足",
+            html.escape(str(summary.get("frontend_insufficient_label") or f'{summary.get("frontend_insufficient_count", 0)}/{total}')),
+            "待补竞品或反查",
+            "warn" if str(summary.get("frontend_insufficient_count", 0)) != "0" else "muted",
+        ),
+    ]
+    if market_insufficient_count or market_failed_count:
+        items.insert(
+            2,
+            (
+                "待补 / 失败",
+                html.escape(f"{market_insufficient_label} / {market_failed_label}"),
+                "需要补证据",
+                "warn",
+            ),
+        )
     return "\n".join(
         [
-            '<div class="priority-grid">',
-            f'<div class="metric-card status-pass">可用前台证据<strong>{html.escape(str(summary.get("frontend_usable_evidence_count", 0)))}/{html.escape(str(summary.get("frontend_queue_total", 0)))}</strong><span class="value">{html.escape(str(summary.get("frontend_coverage_label") or ""))}</span></div>',
-            f'<div class="metric-card">实时成功<strong>{html.escape(str(summary.get("frontend_live_success_count", 0)))}</strong><span class="value">{_format_operation_metric(summary.get("frontend_live_success_rate"), kind="percent")}</span></div>',
-            f'<div class="metric-card">沿用缓存<strong>{html.escape(str(summary.get("frontend_cached_count", 0)))}</strong><span class="value">必须显示数据日期</span></div>',
-            f'<div class="metric-card">搜索页证据<strong>{html.escape(str(summary.get("frontend_search_success_count", 0)))}/{html.escape(str(summary.get("frontend_search_partial_count", 0)))}</strong><span class="value">完整 / 部分，覆盖 {_format_operation_metric(summary.get("frontend_search_observed_rate"), kind="percent")}</span></div>',
+            '<div class="frontend-coverage-strip" aria-label="前台证据覆盖">',
+            *(
+                '<span class="frontend-coverage-chip '
+                + css
+                + '"><span class="coverage-label">'
+                + label
+                + '</span><strong>'
+                + value
+                + '</strong><span class="coverage-note">'
+                + note
+                + "</span></span>"
+                for label, value, note, css in items
+            ),
             "</div>",
         ]
     )
+
+
+def _seller_sprite_product_summary(row: dict[str, object]) -> str:
+    conclusion = str(row.get("product_level_conclusion") or "").strip()
+    pressure = str(row.get("competitor_keyword_pressure") or "").strip()
+    product_page = "缓存" if _boolish(row.get("frontend_cache_used")) else "已读" if str(row.get("frontend_status") or "") == "已自动检查" else "失败" if str(row.get("frontend_status") or "") else "待补"
+    own_status = str(row.get("seller_sprite_check_status") or "").strip()
+    discovery_status = str(row.get("competitor_discovery_status") or "").strip()
+    discovery_page = str(row.get("competitor_discovery_source_page") or "").strip()
+    discovery_error = str(row.get("competitor_discovery_error") or "").strip()
+    pool_status = str(row.get("competitor_pool_status") or "").strip()
+    pool_source = str(row.get("competitor_discovery_source") or "").strip()
+    pool_confidence = str(row.get("competitor_pool_confidence") or "").strip()
+    pool_count = str(row.get("competitor_pool_count") or "").strip()
+    main_competitor_count = str(row.get("main_competitor_count") or "").strip()
+    main_competitor_asins = _compact_keyword_items(row.get("main_competitor_asins"), fallback="", limit=3)
+    reference_competitor_count = str(row.get("reference_competitor_count") or "").strip()
+    comparability_score = str(row.get("competitor_comparability_score") or "").strip()
+    spec_status = str(row.get("competitor_spec_match_status") or "").strip()
+    price_status = str(row.get("competitor_price_band_status") or "").strip()
+    review_status = str(row.get("competitor_review_tier_status") or "").strip()
+    stability_days = str(row.get("competitor_stability_days") or "").strip()
+    scalable_status = str(row.get("scalable_evidence_status") or "").strip()
+    scalable_blockers = _compact_semicolon_items(row.get("scalable_blockers"), fallback="", limit=2)
+    source_keywords = _compact_keyword_items(row.get("competitor_source_keywords"), fallback="", limit=2)
+    rejected_count = str(row.get("competitor_rejected_count") or "").strip()
+    rejection_reasons = _compact_semicolon_items(row.get("competitor_rejection_reasons"), fallback="", limit=2)
+    amazon_validation = str(row.get("amazon_search_validation_status") or "").strip()
+    competitor_status = str(row.get("competitor_sellersprite_status") or "").strip()
+    missing = _compact_keyword_items(row.get("own_missing_competitor_keywords"), fallback="", limit=2)
+    no_match = _compact_keyword_items(row.get("own_ad_terms_not_in_sellersprite"), fallback="", limit=2)
+    today_status = str(row.get("sellersprite_today_status") or "").strip()
+    cache_date = str(row.get("sellersprite_cache_date") or "").strip()
+    history_days = str(row.get("sellersprite_history_days") or "").strip()
+    trend_status = str(row.get("sellersprite_trend_status") or "").strip()
+    persistent_keywords = _compact_keyword_items(row.get("sellersprite_persistent_keywords"), fallback="", limit=2)
+    stable_asins = _compact_keyword_items(row.get("competitor_stable_asins"), fallback="", limit=3)
+    ppc_up = _compact_keyword_items(row.get("sellersprite_ppc_up_keywords"), fallback="", limit=2)
+    pressure_trend = str(row.get("competitor_pressure_trend") or "").strip()
+    missing_trend = _compact_keyword_items(row.get("own_missing_competitor_keywords_trend"), fallback="", limit=2)
+    market_score = str(row.get("market_survey_completeness_score") or "").strip()
+    market_level = str(row.get("market_survey_completeness_level") or "").strip()
+    market_tier = str(row.get("market_survey_decision_evidence_tier") or "").strip()
+    market_missing = _compact_semicolon_items(row.get("market_survey_missing_parts"), fallback="", limit=3)
+    market_steps = _compact_semicolon_items(row.get("market_survey_recommended_fetch_steps"), fallback="", limit=3)
+    market_skip = _compact_semicolon_items(row.get("market_survey_skip_reason"), fallback="", limit=2)
+    def score_text(value: object) -> str:
+        return "" if value is None or value == "" else str(value).strip()
+
+    amazon_product_score = score_text(row.get("amazon_product_page_completeness"))
+    amazon_search_score = score_text(row.get("amazon_search_page_completeness"))
+    seller_own_score = score_text(row.get("sellersprite_own_completeness"))
+    seller_pool_score = score_text(row.get("sellersprite_competitor_pool_completeness"))
+    seller_reverse_score = score_text(row.get("sellersprite_competitor_reverse_completeness"))
+    seller_trend_score = score_text(row.get("sellersprite_trend_completeness"))
+    seller_penalty = score_text(row.get("sellersprite_data_quality_penalty"))
+    chips = []
+    if market_score or market_level:
+        level_text = _compact_unique_labels([market_level, market_tier], _market_survey_level_label)
+        chips.append(f'<span class="seller-chip main">市场调查完整度 {html.escape((market_score or "0") + "/100" + ("｜" + level_text if level_text else ""))}</span>')
+    def score_number(value: str) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    dimension_parts = []
+    if amazon_product_score or amazon_search_score:
+        amazon_total = score_number(amazon_product_score) + score_number(amazon_search_score)
+        dimension_parts.append(
+            f"Amazon 前台完整度 {amazon_total}/35，产品页 {amazon_product_score or 0}/20，搜索页 {amazon_search_score or 0}/15"
+        )
+    if seller_own_score:
+        dimension_parts.append(f"卖家精灵完整度 {seller_own_score}/20")
+    if seller_pool_score or seller_reverse_score:
+        competitor_total = score_number(seller_pool_score) + score_number(seller_reverse_score)
+        dimension_parts.append(
+            f"竞品完整度 {competitor_total}/30，竞品池 {seller_pool_score or 0}/15，竞品反查 {seller_reverse_score or 0}/15"
+        )
+    if seller_trend_score:
+        dimension_parts.append(f"趋势完整度 {seller_trend_score}/10")
+    if seller_penalty and seller_penalty != "0":
+        dimension_parts.append(f"质量扣分 {seller_penalty}/20")
+    if dimension_parts:
+        chips.append(f'<span class="seller-chip">完整度拆分 {html.escape("；".join(dimension_parts[:5]))}</span>')
+    if market_missing:
+        chips.append(f'<span class="seller-chip warn">缺口 {html.escape(market_missing)}</span>')
+    if market_steps:
+        chips.append(f'<span class="seller-chip">补抓 {html.escape(market_steps)}</span>')
+    elif market_skip:
+        chips.append(f'<span class="seller-chip muted">跳过 {html.escape(market_skip)}</span>')
+    chips.append(f'<span class="seller-chip">产品页 {html.escape(product_page)}</span>')
+    if not any([
+        conclusion,
+        pressure,
+        discovery_status,
+        pool_status,
+        own_status,
+        competitor_status,
+        amazon_validation,
+        missing,
+        no_match,
+        today_status,
+        trend_status,
+        main_competitor_count,
+        reference_competitor_count,
+        comparability_score,
+        scalable_status,
+        scalable_blockers,
+    ]):
+        fallback_status = "待补" if str(row.get("frontend_status") or "").strip() else "未入本轮队列"
+        chips.append(f'<span class="seller-chip muted">卖家精灵自己 {html.escape(fallback_status)}</span>')
+        chips.append(f'<span class="seller-chip muted">竞品池 {html.escape(fallback_status)}</span>')
+        chips.append(f'<span class="seller-chip muted">竞品反查 {html.escape(fallback_status)}</span>')
+        return '<div class="operation-seller-summary">' + "".join(chips) + "</div>"
+    if today_status:
+        today_text = today_status
+        if today_status == "沿用缓存" and cache_date:
+            today_text += f" {cache_date}"
+        if history_days and history_days not in {"0", "0.0"}:
+            today_text += f"｜{history_days}天"
+        chips.append(f'<span class="seller-chip">卖家精灵状态 {html.escape(today_text)}</span>')
+    if own_status:
+        chips.append(f'<span class="seller-chip">卖家精灵自己 {html.escape(own_status)}</span>')
+    if trend_status:
+        chips.append(f'<span class="seller-chip">趋势 {html.escape(trend_status)}</span>')
+    if discovery_status:
+        page_label = _seller_source_label(discovery_page)
+        page_part = f"｜{page_label}" if page_label else ""
+        error_part = f"｜{discovery_error[:36]}" if discovery_error and discovery_status not in {"已抓取", "沿用缓存", "缓存"} else ""
+        chips.append(f'<span class="seller-chip">竞品发现 {html.escape(discovery_status + page_part + error_part)}</span>')
+    if pool_status:
+        source_label = _seller_source_label(pool_source)
+        confidence_label = _confidence_label(pool_confidence)
+        source_part = f"｜{source_label}" if source_label else ""
+        confidence_part = f"｜{confidence_label}" if confidence_label else ""
+        try:
+            pool_count_num = int(float(pool_count)) if pool_count else 0
+        except ValueError:
+            pool_count_num = 0
+        count_part = (
+            f"｜有效{pool_count_num}/3"
+            if pool_count_num > 0 and not re.search(r"\d+\s*/\s*3", pool_status)
+            else ""
+        )
+        chips.append(f'<span class="seller-chip">竞品池 {html.escape(pool_status + count_part + source_part + confidence_part)}</span>')
+    if main_competitor_count and main_competitor_count not in {"0", "0.0"}:
+        main_text = f"主竞品 {main_competitor_count}/3"
+        if main_competitor_asins:
+            main_text += f" {main_competitor_asins}"
+        chips.append(f'<span class="seller-chip main">{html.escape(main_text)}</span>')
+    if reference_competitor_count and reference_competitor_count not in {"0", "0.0"}:
+        chips.append(f'<span class="seller-chip">参考竞品 {html.escape(reference_competitor_count)}</span>')
+    if comparability_score:
+        chips.append(f'<span class="seller-chip">可比性 {html.escape(comparability_score)}/100</span>')
+    status_bits = [bit for bit in [spec_status, price_status, review_status] if bit]
+    if status_bits:
+        chips.append(f'<span class="seller-chip">可比检查 {html.escape("｜".join(status_bits[:3]))}</span>')
+    if stability_days and stability_days not in {"0", "0.0"}:
+        chips.append(f'<span class="seller-chip">趋势 {html.escape(stability_days)}天</span>')
+    if scalable_status:
+        css = "main" if scalable_status == "可谨慎放量" else "warn" if scalable_status in {"只能控费止损", "证据不足"} else ""
+        chips.append(f'<span class="seller-chip {css}">放量证据 {html.escape(scalable_status)}</span>')
+    if scalable_blockers:
+        chips.append(f'<span class="seller-chip warn">拦截 {html.escape(scalable_blockers)}</span>')
+    if source_keywords:
+        chips.append(f'<span class="seller-chip">来源词 {html.escape(source_keywords)}</span>')
+    if rejected_count and rejected_count != "0":
+        reject_text = f"剔除 {rejected_count}" + (f"｜{rejection_reasons}" if rejection_reasons else "")
+        chips.append(f'<span class="seller-chip warn">{html.escape(reject_text)}</span>')
+    if competitor_status:
+        chips.append(f'<span class="seller-chip">竞品反查 {html.escape(competitor_status)}</span>')
+    if amazon_validation:
+        chips.append(f'<span class="seller-chip">Amazon 搜索 {html.escape(amazon_validation)}</span>')
+    if conclusion:
+        chips.append(f'<span class="seller-chip main">卖家精灵：{html.escape(conclusion)}</span>')
+    if pressure:
+        chips.append(f'<span class="seller-chip">竞品压力 {html.escape(pressure)}</span>')
+    if pressure_trend and pressure_trend != "无趋势":
+        chips.append(f'<span class="seller-chip">压力趋势 {html.escape(pressure_trend)}</span>')
+    if persistent_keywords:
+        chips.append(f'<span class="seller-chip">连续词 {html.escape(persistent_keywords)}</span>')
+    if stable_asins:
+        chips.append(f'<span class="seller-chip">稳定竞品 {html.escape(stable_asins)}</span>')
+    if missing:
+        chips.append(f'<span class="seller-chip">缺口词 {html.escape(missing)}</span>')
+    elif missing_trend:
+        chips.append(f'<span class="seller-chip">持续缺口 {html.escape(missing_trend)}</span>')
+    elif pool_status in {"", "待补", "卖家精灵证据不足", "竞品证据不足"}:
+        chips.append('<span class="seller-chip">缺口词 待补</span>')
+    if ppc_up:
+        chips.append(f'<span class="seller-chip warn">PPC上升 {html.escape(ppc_up)}</span>')
+    if no_match:
+        chips.append(f'<span class="seller-chip warn">广告无反查 {html.escape(no_match)}</span>')
+    return '<div class="operation-seller-summary">' + "".join(chips) + "</div>"
+
+
+def _seller_sprite_decision_sentence(row: dict[str, object]) -> str:
+    conclusion = str(row.get("product_level_conclusion") or "").strip()
+    pressure = str(row.get("competitor_keyword_pressure") or "").strip()
+    boundary = str(row.get("product_ad_boundary") or "").strip()
+    own_status = str(row.get("seller_sprite_check_status") or "").strip()
+    pool_status = str(row.get("competitor_pool_status") or "").strip()
+    competitor_status = str(row.get("competitor_sellersprite_status") or "").strip()
+    missing = _compact_keyword_items(row.get("own_missing_competitor_keywords"), fallback="", limit=2)
+    no_match = _compact_keyword_items(row.get("own_ad_terms_not_in_sellersprite"), fallback="", limit=2)
+    today_status = str(row.get("sellersprite_today_status") or "").strip()
+    cache_date = str(row.get("sellersprite_cache_date") or "").strip()
+    trend_status = str(row.get("sellersprite_trend_status") or "").strip()
+    persistent = _compact_keyword_items(row.get("sellersprite_persistent_keywords"), fallback="", limit=2)
+    stable_asins = _compact_keyword_items(row.get("competitor_stable_asins"), fallback="", limit=3)
+    market_score = str(row.get("market_survey_completeness_score") or "").strip()
+    market_level = str(row.get("market_survey_completeness_level") or "").strip()
+    market_tier = str(row.get("market_survey_decision_evidence_tier") or "").strip()
+    market_missing = _compact_semicolon_items(row.get("market_survey_missing_parts"), fallback="", limit=2)
+    main_count = str(row.get("main_competitor_count") or "").strip()
+    comparability = str(row.get("competitor_comparability_score") or "").strip()
+    scalable_status = str(row.get("scalable_evidence_status") or "").strip()
+    scalable_blockers = _compact_semicolon_items(row.get("scalable_blockers"), fallback="", limit=2)
+    parts: list[str] = []
+    if market_score or market_level:
+        level_text = _compact_unique_labels([market_level, market_tier], _market_survey_level_label)
+        parts.append(f"市场调查完整度 {market_score or '0'}/100 {level_text}")
+    if market_missing:
+        parts.append(f"缺口 {market_missing}")
+    if conclusion:
+        parts.append(f"结论 {conclusion}")
+    if today_status:
+        if today_status == "沿用缓存" and cache_date:
+            parts.append(f"沿用缓存日期 {cache_date}")
+        else:
+            parts.append(f"今日卖家精灵 {today_status}")
+    if trend_status:
+        parts.append(f"趋势 {trend_status}")
+    if persistent:
+        parts.append(f"连续词 {persistent}")
+    if stable_asins:
+        parts.append(f"稳定竞品 {stable_asins}")
+    if main_count:
+        parts.append(f"主竞品 {main_count} 个")
+    if comparability:
+        parts.append(f"可比性 {comparability}/100")
+    if scalable_status:
+        parts.append(f"放量证据 {scalable_status}")
+    if scalable_blockers:
+        parts.append(f"拦截 {scalable_blockers}")
+    if pressure:
+        parts.append(f"竞品词压力 {pressure}")
+    if missing:
+        parts.append(f"缺口词 {missing}")
+    if no_match:
+        parts.append(f"广告无反查 {no_match}")
+    if boundary:
+        parts.append(boundary)
+    elif own_status or pool_status or competitor_status:
+        evidence_bits = [bit for bit in [own_status, pool_status, competitor_status] if bit]
+        parts.append("证据 " + "、".join(evidence_bits[:3]))
+    return "卖家精灵融合：" + "；".join(parts) if parts else ""
+
+
+def _operation_has_external_evidence(row: dict[str, object]) -> bool:
+    evidence_fields = [
+        "frontend_status",
+        "frontend_search_status",
+        "seller_sprite_check_status",
+        "competitor_discovery_status",
+        "competitor_pool_status",
+        "competitor_sellersprite_status",
+        "amazon_search_validation_status",
+        "product_level_conclusion",
+        "competitor_keyword_pressure",
+    ]
+    weak_values = {"", "无缓存", "待补", "未入本轮队列", "卖家精灵证据不足", "竞品证据不足"}
+    return any(str(row.get(field) or "").strip() not in weak_values for field in evidence_fields)
+
+
+def _operation_evidence_profile(row: dict[str, object]) -> tuple[str, str, str, int]:
+    if _operation_has_external_evidence(row):
+        return (
+            "强证据决策",
+            "已结合前台、卖家精灵或竞品证据，可用于今天动作边界。",
+            "strong",
+            0,
+        )
+    final = str(row.get("final_decision") or "")
+    if final == "DATA_INSUFFICIENT":
+        return (
+            "证据不足",
+            "只能观察或补采集，不能做市场和竞品判断。",
+            "insufficient",
+            2,
+        )
+    inventory = str(row.get("inventory_constraint") or "")
+    has_boundary_data = any(
+        str(row.get(field) or "").strip()
+        for field in [
+            "ad_clicks",
+            "ad_spend",
+            "ad_orders",
+            "total_orders",
+            "natural_orders",
+            "profit_before_ads_per_unit",
+            "cost_status",
+            "inventory_reason",
+        ]
+    )
+    if inventory in {"OUT_OF_STOCK", "LOW_STOCK", "RESTOCK_RECOVERY", "REPLENISH_SOON"} or has_boundary_data:
+        return (
+            "运营边界",
+            "基于库存、利润、订单和广告窗口，只用于控费、补货或保守跑。",
+            "boundary",
+            1,
+        )
+    return (
+        "证据不足",
+        "只能观察或补采集，不能做市场和竞品判断。",
+        "insufficient",
+        2,
+    )
+
+
+def _operation_display_sort_key(row: dict[str, object]) -> tuple[int, int, str, str]:
+    _, _, _, profile_rank = _operation_evidence_profile(row)
+    decision = str(row.get("final_decision") or "")
+    decision_rank = {
+        "FRONTEND_FIRST": 0,
+        "WAIT_REVIEW": 1,
+        "CONSERVATIVE_RUN": 2,
+        "DATA_INSUFFICIENT": 3,
+        "DO_NOT_TOUCH": 4,
+    }.get(decision, 5)
+    return profile_rank, decision_rank, str(row.get("marketplace") or ""), str(row.get("product_name") or "")
+
+
+def _operation_action_boundary_html(allowed_text: str, blocked_text: str, review_label: str, review_text: str) -> str:
+    allowed_main = _compact_semicolon_items(allowed_text, fallback="只观察", limit=2)
+    blocked_main = _compact_semicolon_items(blocked_text, fallback="无强拦截", limit=2)
+    review = f"{review_label}：{review_text}" if review_text else review_label
+    return "".join(
+        [
+            '<div class="operation-action-line">',
+            f'<span class="boundary-chip allow">{_inline_markup(allowed_main)}</span>',
+            f'<span class="boundary-chip block">{_inline_markup(blocked_main)}</span>',
+            f'<span class="boundary-chip review">{_inline_markup(review)}</span>',
+            "</div>",
+        ]
+    )
+
+
+def _operation_review_instruction(row: dict[str, object]) -> tuple[str, str]:
+    raw_text = str(row.get("fusion_review_window") or "").strip()
+    is_generic_wait = "补齐 7 天窗口" in raw_text and "刷新前台" in raw_text
+    if not is_generic_wait:
+        return _display_review_instruction(raw_text)
+
+    if _operation_has_external_evidence(row):
+        pressure = str(row.get("competitor_keyword_pressure") or "").strip()
+        conclusion = str(row.get("product_level_conclusion") or "").strip()
+        if pressure == "高" or conclusion == "暂停扩张":
+            ad_orders = _num_from_text(row.get("ad_orders"))
+            total_orders = _num_from_text(row.get("total_orders"))
+            acos = _num_from_text(_first_present(row, "acos", "ACOS"))
+            target_acos = _num_from_text(row.get("target_acos"))
+            if (ad_orders or 0) <= 0 and (total_orders or 0) <= 0:
+                return ("复查", "7 天看是否破零；没出单继续暂停扩张。")
+            if acos is not None and target_acos is not None:
+                acos_text = _format_operation_metric(acos, kind="percent")
+                if acos <= target_acos:
+                    return ("复查", f"7 天看广告单 {int(ad_orders or 0)}、ACOS {acos_text} 能否守住；前台不修不加预算。")
+                return ("复查", f"7 天看 ACOS {acos_text} 能否回落；高压竞品词继续控费。")
+            if ad_orders and ad_orders > 0:
+                return ("复查", f"7 天看广告单 {int(ad_orders)} 是否延续；不稳定就控费。")
+            return ("复查", "7 天看订单和竞品词变化；不达标继续控费。")
+        return ("复查", "7 天看订单、ACOS 和竞品词变化。")
+
+    inventory = str(row.get("inventory_constraint") or "")
+    if inventory in {"OUT_OF_STOCK", "LOW_STOCK", "RESTOCK_RECOVERY", "REPLENISH_SOON"}:
+        return ("复查", "补货或库存风险解除后，再评估加预算和竞品测试。")
+
+    return ("补证后复查", "满 7 天或前台证据可用后再定动作。")
 
 
 def _operation_decision_display(row: dict[str, str]) -> tuple[str, str]:
@@ -919,6 +1625,7 @@ def _operation_decision_display(row: dict[str, str]) -> tuple[str, str]:
         str(row.get(field) or "")
         for field in [
             "frontend_evidence_tier",
+            "frontend_evidence_display_tier",
             "frontend_evidence_state",
             "frontend_evidence_audit_detail",
             "frontend_search_findings",
@@ -947,38 +1654,52 @@ def _operation_decision_display(row: dict[str, str]) -> tuple[str, str]:
 
 def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary: dict[str, object] | None = None, limit: int = 8) -> str:
     if not rows:
-        return '<section class="section-card" id="product-operation-cards"><h2>产品级结论</h2><p class="subtle">当前没有生成产品级运营结论。</p></section>'
+        return (
+            '<section class="section-card" id="product-operation-cards">'
+            '<h2>产品级结论</h2>'
+            '<div class="card-block decision-summary">'
+            '<strong>系统结论</strong>'
+            '<div class="decision-summary-list">'
+            '<div><span>系统结论</span><strong>当前没有生成产品级运营结论</strong></div>'
+            '<div><span>融合诊断</span><strong>无待处理产品卡</strong></div>'
+            '</div>'
+            '</div>'
+            '<p class="subtle">广告后台动作以下方广告工作台为准。</p>'
+            '</section>'
+        )
     decision_rows = [row for row in rows if str(row.get("final_decision") or "") not in {"EXECUTE_TODAY"}]
     hidden_executed = len(rows) - len(decision_rows)
-    display_rows = decision_rows or rows
+    display_rows = sorted(decision_rows or rows, key=_operation_display_sort_key)
     action_labels = {
-        "bid_up": "允许加竞价",
-        "bid_down": "允许降竞价",
-        "broad_scale": "允许放量",
-        "budget_up": "允许加预算",
-        "create_exact_low_budget": "允许低预算精准测试",
-        "negative_exact": "允许否定精准",
+        "bid_up": "小幅加竞价",
+        "bid_down": "降竞价",
+        "broad_scale": "放量",
+        "budget_up": "加预算",
+        "create_exact_low_budget": "低预算精准测试",
+        "negative_exact": "否定精准",
         "observe": "只观察",
-        "pause": "允许暂停",
+        "pause": "暂停",
     }
     blocked_labels = {
-        "bid_up": "禁止加竞价",
-        "bid_down": "禁止降竞价",
-        "broad_scale": "禁止放量",
-        "budget_up": "禁止加预算",
-        "create_exact_low_budget": "禁止低预算精准测试",
-        "negative_exact": "禁止否定精准",
-        "pause": "禁止暂停",
+        "bid_up": "加竞价",
+        "bid_down": "降竞价",
+        "broad_scale": "放量",
+        "budget_up": "加预算",
+        "create_exact_low_budget": "低预算精准测试",
+        "negative_exact": "否定精准",
+        "pause": "暂停",
     }
     parts = [
         '<section class="section-card" id="product-operation-cards">',
         '<div class="ad-section-header"><h2>产品级结论</h2><span class="status-badge status-muted">按产品决策</span></div>',
         '<p class="operation-section-note">只展示需要你判断、复查或拦截的产品。已执行产品不在这里占位，广告后台动作以下方广告工作台为准。</p>',
-        '<div class="table-wrap"><table class="operation-table">',
-        '<thead><tr><th>产品</th><th>系统结论</th><th>关键数</th><th>动作边界</th><th>依据</th></tr></thead><tbody>',
+        _render_frontend_coverage_strip(coverage_summary or {}),
+        '<div class="operation-wide-list">',
     ]
     for row in display_rows[:limit]:
         marketplace = str(row.get("marketplace") or "")
+        sku = str(row.get("sku") or "").strip()
+        asin = str(row.get("asin") or "").strip().upper()
         decision = str(row.get("final_decision") or "")
         label, label_title = _operation_decision_display(row)
         tag = "tag tag-green" if decision in {"EXECUTE_TODAY", "SMALL_SCALE_ALLOWED"} else "tag tag-yellow" if decision in {"FRONTEND_FIRST", "WAIT_REVIEW", "CONSERVATIVE_RUN"} else "tag tag-gray"
@@ -995,14 +1716,51 @@ def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary
             f'<span class="operation-metric-chip"><span>{html.escape(label_text)}</span><strong>{html.escape(value)}</strong></span>'
             for label_text, value in metrics
         )
+        audit_detail = str(row.get("frontend_evidence_audit_detail") or "").strip()
+        if not audit_detail:
+            audit_reasons = row.get("frontend_evidence_audit_reasons")
+            if isinstance(audit_reasons, list):
+                audit_detail = "；".join(str(reason).strip() for reason in audit_reasons if str(reason).strip())
+            else:
+                audit_detail = str(audit_reasons or "").strip()
         frontend_bits = [
             str(row.get("frontend_status") or "无前台队列"),
             str(row.get("frontend_auto_conclusion_label") or ""),
-            str(row.get("frontend_evidence_tier") or ""),
+            str(row.get("frontend_evidence_display_tier") or row.get("frontend_evidence_tier") or ""),
             f"质量 {row.get('frontend_evidence_quality_score')}" if row.get("frontend_evidence_quality_score") not in (None, "") else "",
-            str(row.get("frontend_evidence_audit_detail") or ""),
+            audit_detail,
             str(row.get("frontend_freshness") or ""),
+            f"市场调查完整度：{row.get('market_survey_completeness_score')}/100，{_market_survey_level_label(row.get('market_survey_completeness_level'))}" if row.get("market_survey_completeness_score") not in (None, "") else "",
+            f"市场调查证据层级：{_market_survey_level_label(row.get('market_survey_decision_evidence_tier'))}" if row.get("market_survey_decision_evidence_tier") else "",
+            f"市场调查缺口：{row.get('market_survey_missing_parts')}" if row.get("market_survey_missing_parts") else "",
+            f"建议补抓：{row.get('market_survey_recommended_fetch_steps')}" if row.get("market_survey_recommended_fetch_steps") else "",
+            f"卖家精灵产品结论：{row.get('product_level_conclusion')}" if row.get("product_level_conclusion") else "",
+            f"竞品发现：{row.get('competitor_discovery_status')}" if row.get("competitor_discovery_status") else "",
+            f"竞品发现页：{_seller_source_label(row.get('competitor_discovery_source_page'))}" if row.get("competitor_discovery_source_page") else "",
+            f"竞品发现错误：{row.get('competitor_discovery_error')}" if row.get("competitor_discovery_error") else "",
+            f"竞品池：{row.get('competitor_pool_status')}" if row.get("competitor_pool_status") else "",
+            f"竞品来源：{_seller_source_label(row.get('competitor_discovery_source'))}" if row.get("competitor_discovery_source") else "",
+            f"竞品池置信度：{_confidence_label(row.get('competitor_pool_confidence'))}" if row.get("competitor_pool_confidence") else "",
+            f"竞品来源词：{row.get('competitor_source_keywords')}" if row.get("competitor_source_keywords") else "",
+            f"竞品剔除：{row.get('competitor_rejected_count')}，{row.get('competitor_rejection_reasons')}" if row.get("competitor_rejected_count") else "",
+            f"Amazon 搜索验证：{row.get('amazon_search_validation_status')}" if row.get("amazon_search_validation_status") else "",
+            f"卖家精灵自己 ASIN：{row.get('seller_sprite_check_status')}" if row.get("seller_sprite_check_status") else "",
+            f"竞品 ASIN 反查：{row.get('competitor_sellersprite_status')}" if row.get("competitor_sellersprite_status") else "",
+            f"竞品词压力：{row.get('competitor_keyword_pressure')}" if row.get("competitor_keyword_pressure") else "",
+            f"竞品重叠词：{row.get('competitor_overlap_keywords')}" if row.get("competitor_overlap_keywords") else "",
+            f"竞品共同词：{row.get('competitor_shared_keywords')}" if row.get("competitor_shared_keywords") else "",
+            f"竞品缺口词：{row.get('own_missing_competitor_keywords')}" if row.get("own_missing_competitor_keywords") else "",
+            f"广告无反查证据词：{row.get('own_ad_terms_not_in_sellersprite')}" if row.get("own_ad_terms_not_in_sellersprite") else "",
         ]
+        search_status = str(row.get("frontend_search_status") or "").strip()
+        search_findings = str(row.get("frontend_search_findings") or "").strip()
+        search_partial = _boolish(row.get("frontend_search_partial_evidence")) or search_status == "已读取部分结果"
+        if search_partial:
+            frontend_bits.append(f"搜索页：{search_status or '部分读取'}")
+        elif search_status:
+            frontend_bits.append(f"搜索页：{search_status}")
+        if search_findings and any(token in search_findings for token in ["未稳定", "部分", "缺失", "竞品", "搜索页"]):
+            frontend_bits.append(search_findings)
         frontend_text = "；".join(bit for bit in frontend_bits if bit)
         cost_bits = [
             str(row.get("cost_status") or ""),
@@ -1012,49 +1770,62 @@ def _render_product_operation_cards(rows: list[dict[str, str]], coverage_summary
         ]
         cost_text = "；".join(bit for bit in cost_bits if bit) or "当前无成本或库存拦截。"
         decision_reason = str(row.get("decision_reason") or row.get("fusion_reason") or "N/A")
+        seller_decision = _seller_sprite_decision_sentence(row)
+        if seller_decision and "卖家精灵融合" not in decision_reason:
+            decision_reason = f"{seller_decision}；{decision_reason}"
         ad_diagnostic = str(row.get("ad_diagnostic_summary") or "")
-        fusion_diagnostic = str(row.get("fusion_issue_type") or "自动证据不足")
-        fusion_confidence = str(row.get("fusion_confidence") or "N/A")
-        fusion_reason = str(row.get("fusion_reason") or "")
         allowed_text = _action_list_text(row.get("today_allowed_actions"), action_labels)
         blocked_text = _action_list_text(row.get("today_blocked_actions"), blocked_labels)
-        allowed_count = _action_item_count(row.get("today_allowed_actions"))
-        blocked_count = _action_item_count(row.get("today_blocked_actions"))
-        review_label, review_text = _display_review_instruction(row.get("fusion_review_window"))
+        review_label, review_text = _operation_review_instruction(row)
+        action_boundary_html = _operation_action_boundary_html(allowed_text, blocked_text, review_label, review_text)
+        decision_summary_html = _render_decision_summary_block(row)
+        seller_summary_html = _seller_sprite_product_summary(row)
+        profile_label, profile_note, profile_class, _ = _operation_evidence_profile(row)
+        profile_html = (
+            f'<div class="operation-profile {profile_class}">'
+            f'<strong>{html.escape(profile_label)}</strong>'
+            f'<span>{html.escape(profile_note)}</span>'
+            "</div>"
+        )
         parts.append(
             "\n".join(
                 [
-                    '<tr>',
-                    '<td class="product-cell">',
+                    (
+                        '<article class="operation-wide-card"'
+                        f' data-product-decision-marketplace="{html.escape(marketplace, quote=True)}"'
+                        f' data-product-decision-sku="{html.escape(sku, quote=True)}"'
+                        f' data-product-decision-asin="{html.escape(asin, quote=True)}"'
+                        f'{_product_decision_contract_attrs(row)}>'
+                    ),
+                    '<div class="operation-wide-head">',
+                    '<div class="operation-wide-product product-cell">',
                     f'<strong>{html.escape(marketplace)}｜{html.escape(str(row.get("product_name") or row.get("asin") or "N/A"))}</strong>',
                     f'<div class="card-meta">{_product_meta_html(row)}</div>',
-                    '</td>',
-                    f'<td><span class="{tag}" title="{html.escape(label_title)}">{html.escape(label)}</span></td>',
-                    f'<td class="metric-cell"><div class="operation-metric-list">{metric_html}</div></td>',
-                    '<td class="action-cell"><div class="operation-action-line">',
-                    f'<span class="allow">允许 {allowed_count} 项</span>',
-                    f'<span class="block">禁止 {blocked_count} 项</span>',
-                    f'<span class="review">{html.escape(review_label)}：{_inline_markup(review_text)}</span>',
-                    '</div></td>',
-                    '<td class="reason-cell">',
+                    profile_html,
+                    '</div>',
+                    f'<div class="operation-wide-verdict"><span class="{tag}" title="{html.escape(label_title)}">{html.escape(label)}</span></div>',
+                    f'<div class="operation-wide-metrics metric-cell"><div class="operation-metric-list">{metric_html}</div></div>',
+                    f'<div class="operation-wide-actions action-cell">{action_boundary_html}</div>',
+                    '</div>',
+                    decision_summary_html,
+                    '<div class="operation-wide-body">',
+                    f'<div class="operation-wide-market">{seller_summary_html}</div>',
+                    '<div class="operation-wide-reason reason-cell">',
                     f'<p class="operation-main-reason">{_inline_markup(decision_reason)}</p>',
                     '<details class="operation-more">',
                     '<summary>展开证据</summary>',
-                    f'<p><strong>融合诊断</strong>：{html.escape(fusion_diagnostic)}；证据质量：{html.escape(fusion_confidence)}</p>',
-                    (f'<p><strong>融合原因</strong>：{_inline_markup(fusion_reason)}</p>' if fusion_reason else ''),
                     f'<p><strong>广告诊断</strong>：{_inline_markup(ad_diagnostic or decision_reason)}</p>',
                     f'<p><strong>前台证据</strong>：{_inline_markup(frontend_text)}</p>',
                     f'<p><strong>成本 / 库存</strong>：{_inline_markup(cost_text)}</p>',
-                    f'<p><strong>允许动作</strong>：{_inline_markup(allowed_text)}</p>',
-                    f'<p><strong>禁止动作</strong>：{_inline_markup(blocked_text)}</p>',
                     f'<div><strong>卡内广告止损项</strong>{_render_operation_ad_actions(row.get("ad_action_items") or [])}</div>',
                     '</details>',
-                    '</td>',
-                    '</tr>',
+                    '</div>',
+                    '</div>',
+                    '</article>',
                 ]
             )
         )
-    parts.append("</tbody></table></div>")
+    parts.append("</div>")
     hidden_other = max(0, len(display_rows) - limit)
     notes = []
     if hidden_other:
@@ -1185,7 +1956,7 @@ def _render_local_data_submit_tool() -> str:
             '<div class="submit-example">',
             '<table><caption>product_cost_config.xlsx 示例，sheet 名：product_cost_config</caption>',
             '<thead><tr><th>marketplace</th><th>currency</th><th>sku</th><th>asin</th><th>product_name</th><th>selling_price</th><th>purchase_cost_rmb</th><th>first_leg_cost_rmb</th><th>suggested_target_acos</th></tr></thead>',
-            '<tbody><tr><td>DE</td><td>EUR</td><td>SKU-DE-001</td><td>B0EXAMPLE1</td><td>Tea Box</td><td>24.99</td><td>52.00</td><td>18.00</td><td>0.12</td></tr></tbody>',
+            '<tbody><tr><td>DE</td><td>EUR</td><td>SKU-DE-001</td><td>B0EXAMPLE1</td><td>Demo cable ties</td><td>24.99</td><td>52.00</td><td>18.00</td><td>0.12</td></tr></tbody>',
             "</table>",
             "</div>",
         ]
@@ -1231,24 +2002,23 @@ def _render_local_data_submit_tool() -> str:
             '<section class="section-card local-submit-panel is-collapsed" id="local-data-submit">',
             '<div>',
             '<div class="ad-section-header"><div><p class="local-submit-kicker">LOCAL WORKFLOW</p><h2>提交今日数据</h2></div><button class="collapsible-toggle" type="button" data-collapse-toggle>展开</button></div>',
-            '<p class="local-submit-lead">日报文件进 inbox；产品和成本配置先进审核区。成本表影响利润和广告动作，必须先看差异审计。</p>',
+            '<p class="local-submit-lead">上传日报会先进 inbox 校验，再刷新报告；成本和 SKU 配置仍走审核区。</p>',
             '<div class="collapsible-body">',
             '<div class="daily-submit-card">',
-            '<div class="config-submit-header"><strong>日报文件</strong><span class="submit-pill">CSV / XLSX</span></div>',
-            '<p class="subtle">上传广告、ERP、Seller Central 自定义分析文件；preflight 通过后会自动运行 daily update 刷新报告。</p>',
+            '<div class="config-submit-header"><strong>日报文件</strong><span class="submit-pill">CSV/XLSX</span></div>',
+            '<p class="subtle">上传广告、ERP、Seller Central 自定义分析文件；上传通过后自动刷新报告。</p>',
             '<form class="local-submit-form" data-local-submit-form>',
             '<input type="file" name="files" multiple accept=".csv,.xlsx">',
             '<div class="local-file-list" data-local-file-list>可一次多选多个 CSV / XLSX 文件，按住 Command 或 Shift 选择。</div>',
             '<button class="button-link primary" type="submit">上传并刷新日报</button>',
-            '<button class="button-link secondary" type="button" data-run-daily-update>手动运行 daily update</button>',
             "</form>",
-            '<p class="subtle">限制：仅本机 127.0.0.1 服务；单个文件 50MB；可一次多选；unknown 文件会阻塞 daily update。</p>',
+            '<p class="subtle">限制：仅本机 127.0.0.1 服务；单个文件 50MB；可一次多选；无法识别的文件会阻塞日报刷新。</p>',
             "</div>",
             _render_collapsed_block("配置文件审核", config_tools, "成本表和 SKU 别名整理时再展开；日报上传不受影响。"),
             "</div>",
             '<div class="local-submit-status-panel">',
-            '<div class="local-submit-status" data-local-submit-status>日报文件：需要本机服务运行。上传通过后会自动运行 daily update；若自动启动失败，再用手动按钮。</div>',
-            '<div class="local-submit-status" data-config-submit-status>配置文件：成本表必须先看差异审计；未确认前不应覆盖正式配置。</div>',
+            '<div class="local-submit-status" data-local-submit-status>日报：暂无运行任务；上传通过后自动刷新报告。</div>',
+            '<div class="local-submit-status" data-config-submit-status>配置：成本表和 SKU 别名只在展开后处理，应用前必须审计。</div>',
             "</div>",
             "</div>",
             "</section>",

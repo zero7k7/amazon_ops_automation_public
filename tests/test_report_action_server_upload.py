@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import urllib.error
+from datetime import date, timedelta
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -40,6 +41,16 @@ def _patch_paths(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(server, "CONFIG_ARCHIVE_DIR", archive)
     monkeypatch.setattr(
         server,
+        "_start_sellersprite_reverse_async",
+        lambda **kwargs: {
+            "running": False,
+            "returncode": 0,
+            "status_scope": "sellersprite_async",
+            "message": "test sellersprite skipped",
+        },
+    )
+    monkeypatch.setattr(
+        server,
         "CONFIG_UPLOAD_TARGETS",
         {
             "cost": {
@@ -65,6 +76,461 @@ def _patch_paths(monkeypatch, tmp_path: Path) -> Path:
         },
     )
     return inbox
+
+
+def test_sellersprite_needed_summary_marks_stale_own_cache_missing(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0STALEOWN",
+                                    "product_name": "Stale own cache",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0STALEOWN",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": yesterday,
+                        "keywords": [{"keyword": "old keyword"}],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = server._sellersprite_reverse_needed_summary()
+
+    assert summary["sellersprite_cached_count"] == 0
+    assert "US B0STALEOWN" in summary["sellersprite_missing_labels"]
+
+
+def test_sellersprite_needed_summary_does_not_treat_failed_cache_as_available(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0FAILCACHE",
+                                    "product_name": "Failed cache",
+                                },
+                                {
+                                    "marketplace": "US",
+                                    "sku": "SKU-2",
+                                    "asin": "B0EMPTYKEYS",
+                                    "product_name": "Empty keywords",
+                                },
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0FAILCACHE",
+                        "seller_sprite_check_status": "抓取失败",
+                        "data_date": today,
+                        "keywords": [],
+                    },
+                    {
+                        "marketplace": "US",
+                        "asin": "B0EMPTYKEYS",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "keywords": [],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = server._sellersprite_reverse_needed_summary()
+
+    assert summary["sellersprite_cached_count"] == 0
+    assert summary["sellersprite_missing_count"] >= 2
+    assert "US B0FAILCACHE" in summary["sellersprite_missing_labels"]
+    assert "US B0EMPTYKEYS" in summary["sellersprite_missing_labels"]
+
+
+def test_status_payload_refreshes_stale_sellersprite_no_run_message(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0FAILCACHE",
+                                    "product_name": "Failed cache",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0FAILCACHE",
+                        "seller_sprite_check_status": "抓取失败",
+                        "data_date": today,
+                        "keywords": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    server._last_result = {"running": False, "message": "ready"}
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "ready",
+            "sellersprite_async_status": {
+                "running": False,
+                "message": "卖家精灵后台反查无需运行：当前前台队列已有缓存。",
+                "sellersprite_missing_count": 0,
+            },
+        }
+    )
+
+    payload = server._status_payload()
+
+    seller_status = payload["sellersprite_async_status"]
+    assert "本次需抓" in seller_status["message"]
+    assert seller_status["sellersprite_missing_count"] >= 1
+    assert "US B0FAILCACHE" in seller_status["sellersprite_missing_labels"]
+
+
+def test_status_payload_replaces_stale_sellersprite_missing_count_when_cache_now_valid(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        server,
+        "SELLERSPRITE_COMPETITOR_DISCOVERY_CACHE_PATH",
+        server.OUTPUT_DIR / "sellersprite_competitor_discovery_results.json",
+    )
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setitem(
+        server._sellersprite_competitor_rows.__globals__,
+        "SELLERSPRITE_CACHE_PATH",
+        server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json",
+    )
+    today = date.today().isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "priority": "P0",
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0VALID001",
+                                    "product_name": "Valid cache",
+                                    "frontend_competitor_count": 3,
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_competitor_discovery_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                        {
+                            "marketplace": "US",
+                            "sku": "SKU-1",
+                            "asin": "B0VALID001",
+                            "competitor_discovery_status": "已抓取",
+                            "data_date": today,
+                            "checked_at": f"{today}T16:00:00",
+                            "competitors": [
+                                {
+                                    "competitor_asin": "B0COMP0001",
+                                    "competitor_title": "Valid competitor",
+                                    "competitor_source": "sellersprite_keyword_overlap",
+                                }
+                            ],
+                        }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0VALID001",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "checked_at": f"{today}T16:00:00",
+                        "keywords": [{"keyword": "valid keyword"}],
+                    },
+                    {
+                        "marketplace": "US",
+                        "asin": "B0COMP0001",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "checked_at": f"{today}T16:00:00",
+                        "keywords": [{"keyword": "valid keyword"}],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    server._last_result = {"running": False, "message": "ready"}
+    server._sellersprite_async_status = {"running": False, "message": "本次需抓 1 个 ASIN。"}
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "ready",
+            "sellersprite_missing_count": 1,
+            "sellersprite_missing_labels": ["US B0VALID001"],
+            "sellersprite_async_status": {
+                "running": False,
+                "message": "本次需抓 1 个 ASIN。",
+                "sellersprite_missing_count": 1,
+            },
+        }
+    )
+
+    payload = server._status_payload()
+
+    assert payload["sellersprite_cached_count"] == 2
+    assert payload["sellersprite_missing_count"] == 0
+    assert payload["sellersprite_missing_labels"] == []
+    assert payload["sellersprite_async_status"]["sellersprite_missing_count"] == 0
+    assert "已有有效反查" in payload["sellersprite_async_status"]["message"]
+
+
+def test_status_payload_shows_valid_cache_after_service_restart(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        server,
+        "SELLERSPRITE_COMPETITOR_DISCOVERY_CACHE_PATH",
+        server.OUTPUT_DIR / "sellersprite_competitor_discovery_results.json",
+    )
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setitem(
+        server._sellersprite_competitor_rows.__globals__,
+        "SELLERSPRITE_CACHE_PATH",
+        server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json",
+    )
+    today = date.today().isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "priority": "P0",
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0VALID001",
+                                    "product_name": "Valid cache",
+                                    "frontend_competitor_count": 3,
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_competitor_discovery_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "sku": "SKU-1",
+                        "asin": "B0VALID001",
+                        "competitor_discovery_status": "已抓取",
+                        "data_date": today,
+                        "checked_at": f"{today}T16:00:00",
+                        "competitors": [
+                            {
+                                "competitor_asin": "B0COMP0001",
+                                "competitor_title": "Valid competitor",
+                                "competitor_source": "sellersprite_keyword_overlap",
+                            }
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0VALID001",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "checked_at": f"{today}T16:00:00",
+                        "keywords": [{"keyword": "valid keyword"}],
+                    },
+                    {
+                        "marketplace": "US",
+                        "asin": "B0COMP0001",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "checked_at": f"{today}T16:00:00",
+                        "keywords": [{"keyword": "valid keyword"}],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    server._last_result = {"running": False, "message": "ready"}
+    server._sellersprite_async_status = {"running": False, "message": "卖家精灵后台反查未运行。"}
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "ready",
+            "sellersprite_async_status": {
+                "running": False,
+                "message": "卖家精灵后台反查未运行。",
+            },
+        }
+    )
+
+    payload = server._status_payload()
+
+    assert payload["sellersprite_cached_count"] == 2
+    assert payload["sellersprite_missing_count"] == 0
+    assert "已有有效反查" in payload["sellersprite_async_status"]["message"]
+
+
+def test_sellersprite_no_run_path_snapshots_cached_queue(monkeypatch, tmp_path: Path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "marketplace": "US",
+                                    "sku": "SKU-1",
+                                    "asin": "B0CACHED01",
+                                    "product_name": "Cached own",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "US",
+                        "asin": "B0CACHED01",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": today,
+                        "keywords": [{"keyword": "cached keyword"}],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(server, "upsert_sellersprite_history", lambda records, **kwargs: calls.append(list(records)))
+
+    count = server._snapshot_cached_sellersprite_queue()
+
+    assert count == 1
+    assert calls[0][0]["asin"] == "B0CACHED01"
+    assert calls[0][0]["seller_sprite_check_status"] == "已抓取"
 
 
 def _xlsx_bytes(sheet_name: str, headers: list[str], row: list[object]) -> bytes:
@@ -93,6 +559,33 @@ def test_validate_upload_name_rejects_bad_extension_and_large_file() -> None:
     assert "超过 50MB" in size_error
     assert "文件为空" in empty_error
     assert server._validate_upload_name("ads.csv", 10)[1] == ""
+
+
+def test_startup_clears_stale_frontend_retry_not_needed_status(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    server.SUBMISSION_STATUS_PATH.write_text(
+        json.dumps(
+            {
+                "running": False,
+                "message": "无需刷新：7/7 个已有今日前台证据；未访问 Amazon。",
+                "status_scope": "frontend_retry",
+                "failure_mode": "frontend_refresh_not_needed",
+                "frontend_refresh_total": 7,
+                "frontend_refresh_skipped": 7,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    server._clear_stale_running_status_on_startup()
+
+    payload = json.loads(server.SUBMISSION_STATUS_PATH.read_text(encoding="utf-8"))
+    assert payload["status_scope"] == "frontend_retry_idle"
+    assert payload["failure_mode"] == "frontend_retry_stale_result_cleared"
+    assert "点击按钮会重新读取当前队列" in payload["message"]
+    assert "frontend_refresh_skipped" not in payload
 
 
 def test_save_uploaded_files_rejects_whole_batch_when_any_file_is_invalid(monkeypatch, tmp_path) -> None:
@@ -182,6 +675,42 @@ def test_completed_payload_drops_stale_runtime_fields(monkeypatch, tmp_path) -> 
     assert "total_steps" not in payload
 
 
+def test_run_command_with_status_returns_127_when_process_cannot_start(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+
+    def raise_popen_error(*args, **kwargs):
+        raise OSError("spawn denied")
+
+    monkeypatch.setattr(server.subprocess, "Popen", raise_popen_error)
+
+    completed = server._run_command_with_status(
+        [server.sys.executable, "scripts/run_daily_update.py"],
+        timeout=1,
+        step=1,
+        total_steps=1,
+        message="运行 daily update",
+    )
+
+    assert completed.returncode == 127
+    assert completed.stdout == ""
+    assert "cannot start command: spawn denied" in completed.stderr
+
+
+def test_run_command_returns_127_when_process_cannot_start(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+
+    def raise_run_error(*args, **kwargs):
+        raise OSError("spawn denied")
+
+    monkeypatch.setattr(server.subprocess, "run", raise_run_error)
+
+    completed = server._run_command([server.sys.executable, "main.py", "--marketplace", "ALL"], timeout=1)
+
+    assert completed.returncode == 127
+    assert completed.stdout == ""
+    assert "cannot start command: spawn denied" in completed.stderr
+
+
 def test_status_payload_hides_runtime_fields_after_completion(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     server._sync_last_result(
@@ -220,6 +749,61 @@ def test_status_payload_normalizes_legacy_frontend_retry_failure(monkeypatch, tm
     assert payload["returncode"] == 1
     assert payload["soft_failure"] is True
     assert payload["failure_mode"] == "urllib_frontend_blocked"
+
+
+def test_status_payload_downgrades_restored_daily_update_failure_when_report_exists(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server._last_result = {"running": False, "message": "ready"}
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (server.OUTPUT_DIR / "latest_recommendations.html").write_text("<html>ok</html>", encoding="utf-8")
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "daily update 失败，请查看输出摘要。",
+            "returncode": 1,
+            "stdout_tail": "\n".join(
+                [
+                    "[fail] report refresh blocker: import manifest successful core row 1 ads_report.csv missing parseable date",
+                    "[restore] report outputs restored to pre-report snapshot after failure; database/archive state restored when tracked",
+                ]
+            ),
+            "stderr_tail": "",
+        }
+    )
+
+    payload = server._status_payload()
+
+    assert payload["returncode"] == 0
+    assert payload["original_returncode"] == 1
+    assert payload["soft_failure"] is True
+    assert payload["status_scope"] == "daily_update_restored_report"
+    assert payload["failure_mode"] == "import_manifest_date_blocker_restored_report"
+    assert "报告可用" in str(payload["message"])
+
+
+def test_status_payload_keeps_restored_daily_update_failure_red_when_report_missing(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    server._last_result = {"running": False, "message": "ready"}
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "daily update 失败，请查看输出摘要。",
+            "returncode": 1,
+            "stdout_tail": "\n".join(
+                [
+                    "[fail] report refresh blocker: import manifest successful core row 1 ads_report.csv missing parseable date",
+                    "[restore] report outputs restored to pre-report snapshot after failure; database/archive state restored when tracked",
+                ]
+            ),
+            "stderr_tail": "",
+        }
+    )
+
+    payload = server._status_payload()
+
+    assert payload["returncode"] == 1
+    assert "original_returncode" not in payload
+    assert payload["message"] == "daily update 失败，请查看输出摘要。"
 
 
 def test_status_payload_normalizes_legacy_chrome_frontend_retry_message(monkeypatch, tmp_path) -> None:
@@ -261,10 +845,49 @@ def test_status_payload_normalizes_legacy_chrome_frontend_retry_message(monkeypa
 
     payload = server._status_payload()
 
-    assert payload["message"] == "当前前台队列刷新通过：1/1 个已读取，队列成功率 100%，门槛 80%；报告已刷新。"
+    assert payload["message"] == "调查完成：本轮队列 1/1。"
     assert "真实 Chrome 20次前台检查" not in payload["message"]
     assert payload["status_scope"] == "frontend_retry"
     assert payload["failure_mode"] == "chrome_cdp_frontend_check_passed"
+
+
+def test_status_payload_compacts_current_frontend_retry_message(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
+    rows = [
+        {
+            "marketplace": "UK",
+            "asin": f"B0PASS000{index}",
+            "frontend_check_status": "已自动检查",
+            "frontend_check_method": "chrome-cdp",
+            "frontend_data_date": "2026-06-17",
+        }
+        for index in range(7)
+    ]
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps({"marketplace_results": [{"report_view_snapshot": {"frontend_check_queue_rows": rows}}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    server._last_result = {"running": False, "message": "ready"}
+    server._write_submission_status(
+        {
+            "running": False,
+            "message": "当前前台队列刷新通过：新读 7 个，跳过 0 个，沿用缓存 0 个，失败 0 个；今日证据 7/7，队列成功率 100%，门槛 80%。",
+            "returncode": 0,
+            "status_scope": "frontend_retry",
+            "frontend_refresh_total": 7,
+            "frontend_refresh_live_checked": 7,
+            "frontend_refresh_skipped": 0,
+            "frontend_refresh_cache_used": 0,
+            "frontend_refresh_failed": 0,
+        }
+    )
+
+    payload = server._status_payload()
+
+    assert payload["message"] == "调查完成：本轮队列 7/7，新读 7，失败 0。"
+    assert "当前前台队列刷新" not in str(payload["message"])
 
 
 def test_status_payload_reclassifies_partial_frontend_retry_from_latest_report(monkeypatch, tmp_path) -> None:
@@ -320,8 +943,8 @@ def test_status_payload_reclassifies_partial_frontend_retry_from_latest_report(m
     assert payload["frontend_live_passed_count"] == 1
     assert payload["frontend_queue_total"] == 2
     assert payload["frontend_queue_passed"] is False
-    assert "1/2 个已读取" in str(payload["message"])
-    assert "刷新未达标" in str(payload["message"])
+    assert "本轮队列 1/2" in str(payload["message"])
+    assert "调查待补" in str(payload["message"])
     assert "DE B0WAIT0001" in str(payload["message"])
 
 
@@ -366,8 +989,8 @@ def test_status_payload_accepts_frontend_retry_when_queue_success_rate_reaches_8
     assert payload["frontend_queue_total"] == 5
     assert payload["frontend_queue_success_rate"] == 0.8
     assert payload["frontend_queue_passed"] is True
-    assert "刷新通过" in str(payload["message"])
-    assert "队列成功率 80%" in str(payload["message"])
+    assert "调查完成" in str(payload["message"])
+    assert "本轮队列 4/5" in str(payload["message"])
     assert "DE B0WAIT0001" in str(payload["message"])
 
 
@@ -466,25 +1089,29 @@ def test_untrusted_origin_gets_no_cors_allow_header(monkeypatch, tmp_path) -> No
     assert "Access-Control-Allow-Origin" not in headers
 
 
-def test_get_frontend_retry_is_method_not_allowed_and_does_not_run(monkeypatch, tmp_path) -> None:
+def test_get_run_endpoints_are_method_not_allowed_and_do_not_run(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
-    handler = object.__new__(server.Handler)
-    handler.path = "/run/frontend-retry"
-    handler.headers = {}
-    handler.wfile = io.BytesIO()
-    sent: dict[str, str] = {}
+    for path, method_name in [
+        ("/run/report-refresh", "_start_report_refresh"),
+        ("/run/frontend-retry", "_start_frontend_retry"),
+    ]:
+        handler = object.__new__(server.Handler)
+        handler.path = path
+        handler.headers = {}
+        handler.wfile = io.BytesIO()
+        sent: dict[str, str] = {}
 
-    monkeypatch.setattr(handler, "send_response", lambda status, message=None: sent.setdefault(":status", str(status)))
-    monkeypatch.setattr(handler, "send_header", lambda key, value: sent.setdefault(key, str(value)))
-    monkeypatch.setattr(handler, "end_headers", lambda: None)
-    monkeypatch.setattr(handler, "_start_frontend_retry", lambda: (_ for _ in ()).throw(AssertionError("GET triggered side effect")))
+        monkeypatch.setattr(handler, "send_response", lambda status, message=None, sent=sent: sent.setdefault(":status", str(status)))
+        monkeypatch.setattr(handler, "send_header", lambda key, value, sent=sent: sent.setdefault(key, str(value)))
+        monkeypatch.setattr(handler, "end_headers", lambda: None)
+        monkeypatch.setattr(handler, method_name, lambda: (_ for _ in ()).throw(AssertionError("GET triggered side effect")))
 
-    handler.do_GET()
+        handler.do_GET()
 
-    assert sent[":status"] == "405"
-    payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-    assert payload["ok"] is False
-    assert "POST" in payload["message"]
+        assert sent[":status"] == "405"
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert payload["ok"] is False
+        assert "POST" in payload["message"]
 
 
 def test_valid_token_allows_all_side_effect_post_dispatch(monkeypatch, tmp_path) -> None:
@@ -495,6 +1122,7 @@ def test_valid_token_allows_all_side_effect_post_dispatch(monkeypatch, tmp_path)
         ("/upload/config?kind=cost", "_handle_config_upload", "cost"),
         ("/apply/config?kind=alias", "_handle_config_apply", "alias"),
         ("/copy/text", "_handle_copy_text", None),
+        ("/run/report-refresh", "_start_report_refresh", None),
         ("/run/daily-update", "_start_daily_update", None),
         ("/run/frontend-retry", "_start_frontend_retry", None),
         ("/run/frontend-check-one?marketplace=US&asin=B0TEST0001", "_start_frontend_check_one", "US"),
@@ -549,6 +1177,27 @@ def test_copy_text_endpoint_writes_pbcopy(monkeypatch, tmp_path) -> None:
     assert pbcopy_calls[0]["input"] == "keyword\t站点=UK | 动作=小预算试投"
 
 
+def test_copy_text_endpoint_reports_pbcopy_start_failure(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    handler = object.__new__(server.Handler)
+    body = json.dumps({"text": "keyword\t站点=UK | 动作=小预算试投"}).encode("utf-8")
+    handler.headers = {"Content-Length": str(len(body))}
+    handler.rfile = io.BytesIO(body)
+    sent: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        raise OSError("pbcopy missing")
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    monkeypatch.setattr(handler, "_send_json", lambda status, payload: sent.update({"status": status, "payload": payload}))
+
+    handler._handle_copy_text()
+
+    assert sent["status"] == 500
+    assert sent["payload"]["ok"] is False
+    assert sent["payload"]["message"] == "本机复制命令不可用：pbcopy missing"
+
+
 def test_ensure_server_accepts_token_protected_ad_completion_endpoint(monkeypatch) -> None:
     def fake_urlopen(request, timeout=0.8):
         body = json.dumps({"ok": False, "message": "本地确认服务 token 缺失或无效"}).encode("utf-8")
@@ -572,7 +1221,7 @@ def test_append_ad_completion_feedback_writes_required_fields_and_dedupes(monkey
         "sku": "SKU-1",
         "asin": "B0TEST1234",
         "product_name": "Test product",
-        "search_term_or_target": "led desk lamp",
+        "search_term_or_target": "metal board",
         "suggested_action": "降竞价10%-20%",
         "manual_action_taken": "降竞价 10%-20%",
         "confirmed_at": "2026-06-18 09:30:00",
@@ -595,7 +1244,7 @@ def test_append_ad_completion_feedback_writes_required_fields_and_dedupes(monkey
     assert saved["report_date"] == "2026-06-17"
     assert saved["next_review"] == "2026-06-21"
     assert saved["cooldown_days"] == 7
-    assert saved["search_term_or_target"] == "led desk lamp"
+    assert saved["search_term_or_target"] == "metal board"
     audit_rows = []
     for audit_path in server.OUTPUT_DIR.glob("feedback_audit_log_*.json"):
         audit_rows.extend(json.loads(audit_path.read_text(encoding="utf-8")))
@@ -646,7 +1295,7 @@ def test_ad_completion_feedback_round_trip_removes_copy_row_and_writes_keyword_r
         "sku": "SKU-1",
         "asin": "B0TEST1234",
         "product_name": "Test product",
-        "search_term_or_target": "led desk lamp",
+        "search_term_or_target": "metal board",
         "campaign": "Manual Exact",
         "match_type_or_targeting": "exact",
         "suggested_action": "降竞价10%-20%",
@@ -702,7 +1351,7 @@ def test_ad_completion_feedback_round_trip_removes_copy_row_and_writes_keyword_r
     review_rows = json.loads(review_path.read_text(encoding="utf-8"))
 
     assert any(
-        row.get("search_term_or_target") == "led desk lamp"
+        row.get("search_term_or_target") == "metal board"
         and row.get("normalized_action") == "bid_down"
         and row.get("action_id") == feedback["action_id"]
         for row in review_rows
@@ -805,7 +1454,7 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
         {
             "actions": [
                 {**base, "search_term_or_target": "adjustable desk lamp"},
-                {**base, "search_term_or_target": "dimmable desk lamp"},
+                {**base, "search_term_or_target": "dimmer desk lamp with dimmer switch"},
             ]
         }
     )
@@ -817,7 +1466,7 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
     assert len(saved_payload["rows"]) == 2
     assert {row["search_term_or_target"] for row in saved_payload["rows"]} == {
         "adjustable desk lamp",
-        "dimmable desk lamp",
+        "dimmer desk lamp with dimmer switch",
     }
 
     payload = autoopt_feedback.build_autoopt_payload(
@@ -836,13 +1485,13 @@ def test_growth_test_batch_completion_writes_term_level_self_optimization_rows(m
 
     review_rows = json.loads((server.OUTPUT_DIR / "keyword_action_review_20260617.json").read_text(encoding="utf-8"))
     reviewed_terms = {row.get("search_term_or_target") for row in review_rows if row.get("normalized_action") == "growth_test"}
-    assert {"adjustable desk lamp", "dimmable desk lamp"} <= reviewed_terms
+    assert {"adjustable desk lamp", "dimmer desk lamp with dimmer switch"} <= reviewed_terms
     memory_terms = {
         row.get("search_term_or_target")
         for row in payload.get("keyword_strategy_memory", [])
         if row.get("normalized_action") == "growth_test"
     }
-    assert {"adjustable desk lamp", "dimmable desk lamp"} <= memory_terms
+    assert {"adjustable desk lamp", "dimmer desk lamp with dimmer switch"} <= memory_terms
 
 
 def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monkeypatch, tmp_path) -> None:
@@ -872,7 +1521,7 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
     }
     actions = [
         {**base, "search_term_or_target": "adjustable desk lamp"},
-        {**base, "search_term_or_target": "dimmable desk lamp"},
+        {**base, "search_term_or_target": "dimmer desk lamp with dimmer switch"},
     ]
     feedbacks, appended_flags, row_count = server.append_ad_completion_feedback_batch({"actions": actions})
 
@@ -885,7 +1534,7 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
     assert remaining_count == 0
     assert {row["search_term_or_target"] for row in removed_rows} == {
         "adjustable desk lamp",
-        "dimmable desk lamp",
+        "dimmer desk lamp with dimmer switch",
     }
     saved_payload = json.loads((server.OUTPUT_DIR / "autoopt_feedback_input.json").read_text(encoding="utf-8"))
     assert saved_payload["rows"] == []
@@ -922,40 +1571,81 @@ def test_cancel_growth_test_batch_completion_removes_self_optimization_rows(monk
 def test_single_frontend_check_uses_urllib_cache_path(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     calls: list[list[str]] = []
+    sellersprite_calls: list[dict[str, object]] = []
+    events: list[str] = []
 
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("frontend" if "scripts/run_frontend_checks.py" in command else "report")
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(
+        server,
+        "_start_sellersprite_reverse_async",
+        lambda **kwargs: events.append("sellersprite") or sellersprite_calls.append(kwargs) or {},
+    )
     server._lock.acquire(blocking=False)
 
     server._run_frontend_check_one({"marketplace": "UK", "sku": "SKU-1", "asin": "B0TEST1234"})
 
     assert calls[0][:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "urllib"]
+    assert "--with-sellersprite-reverse-asin" not in calls[0]
+    assert "--sellersprite-target-count" not in calls[0]
     assert "--reuse-browser-session" not in calls[0]
     assert "chrome-persistent" not in calls[0]
+    assert sellersprite_calls == [{"params": {"marketplace": "UK", "sku": "SKU-1", "asin": "B0TEST1234"}}]
+    assert events[:2] == ["sellersprite", "frontend"]
 
 
 def test_battle_diagnosis_uses_urllib_cache_path(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     calls: list[list[str]] = []
+    sellersprite_calls: list[dict[str, str]] = []
+    events: list[str] = []
 
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("frontend" if "scripts/run_frontend_checks.py" in command else "report")
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(
+        server,
+        "_start_sellersprite_reverse_async",
+        lambda **kwargs: events.append("sellersprite") or sellersprite_calls.append(kwargs) or {},
+    )
     server._lock.acquire(blocking=False)
 
     server._run_battle_diagnosis_one({"marketplace": "UK", "sku": "SKU-1", "asin": "B0TEST1234"})
 
     assert calls[0][:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "urllib"]
+    assert "--with-sellersprite-reverse-asin" not in calls[0]
+    assert "--sellersprite-target-count" not in calls[0]
     assert "--reuse-browser-session" not in calls[0]
     assert "chrome-persistent" not in calls[0]
+    assert sellersprite_calls == [{"params": {"marketplace": "UK", "sku": "SKU-1", "asin": "B0TEST1234"}}]
+    assert events[:2] == ["sellersprite", "frontend"]
 
 
-def test_chrome_cdp_launch_uses_configured_chrome_path(monkeypatch, tmp_path) -> None:
+def test_sellersprite_progress_parser_reads_start_and_finish_lines() -> None:
+    start = server._sellersprite_progress_from_line("[sellersprite] 3/7 UK B0FAKELOG1 开始反查")
+    assert start["event"] == "start"
+    assert start["step"] == 3
+    assert start["total_steps"] == 7
+    assert start["current_label"] == "UK B0FAKELOG1"
+    assert "3/7 UK B0FAKELOG1" in str(start["message"])
+
+    finish = server._sellersprite_progress_from_line(
+        "[sellersprite] UK B0FAKELOG1 已抓取 captured=20 total=43 error="
+    )
+    assert finish["event"] == "finish"
+    assert finish["record_status"] == "已抓取"
+    assert finish["captured_count"] == 20
+    assert finish["reported_total"] == "43"
+
+
+def test_chrome_cdp_launch_uses_background_offscreen_window(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     fake_chrome = tmp_path / "Google Chrome"
     fake_chrome.write_text("", encoding="utf-8")
@@ -975,7 +1665,7 @@ def test_chrome_cdp_launch_uses_configured_chrome_path(monkeypatch, tmp_path) ->
         calls.append(command)
         return DummyProcess()
 
-    monkeypatch.setenv("AMAZON_OPS_CHROME_PATH", str(fake_chrome))
+    monkeypatch.setattr(server, "MAC_CHROME_APP", str(fake_chrome))
     monkeypatch.setattr(server, "_chrome_cdp_available", fake_available)
     monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
 
@@ -983,11 +1673,40 @@ def test_chrome_cdp_launch_uses_configured_chrome_path(monkeypatch, tmp_path) ->
 
     assert len(calls) == 1
     command = calls[0]
-    assert command[0] == str(fake_chrome)
+    assert command[:5] == ["/usr/bin/open", "-g", "-na", "Google Chrome", "--args"]
     assert "--remote-debugging-port=9222" in command
     assert any(part.startswith("--user-data-dir=") and "chrome_cdp_profile" in part for part in command)
     assert "--window-position=-32000,-32000" in command
     assert "--window-size=1280,900" in command
+
+
+def test_sellersprite_reverse_command_uses_headed_offscreen_browser() -> None:
+    command = server._sellersprite_reverse_command(priority="P0")
+
+    assert command[:2] == [server.sys.executable, "scripts/sellersprite_reverse_asin_fetch.py"]
+    assert "--target-count" in command
+    assert command[command.index("--target-count") + 1] == "20"
+    assert "--priority" in command
+    assert command[command.index("--priority") + 1] == "P0"
+    assert "--headless" not in command
+
+
+def test_chrome_cdp_launch_failure_returns_false_and_logs_reason(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    fake_chrome = tmp_path / "Google Chrome"
+    fake_chrome.write_text("", encoding="utf-8")
+
+    def fake_popen(*args, **kwargs):
+        raise OSError("macOS denied open")
+
+    monkeypatch.setattr(server, "MAC_CHROME_APP", str(fake_chrome))
+    monkeypatch.setattr(server, "_chrome_cdp_available", lambda endpoint=server.CHROME_CDP_ENDPOINT: False)
+    monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
+
+    assert server._start_chrome_cdp_if_needed(wait_seconds=1) is False
+
+    log_text = (server.OUTPUT_DIR / "chrome_cdp_launch.log").read_text(encoding="utf-8")
+    assert "cannot start Chrome CDP: macOS denied open" in log_text
 
 
 def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatch, tmp_path) -> None:
@@ -995,6 +1714,8 @@ def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatc
     monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
+    sellersprite_calls: list[dict[str, str]] = []
+    events: list[str] = []
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (server.OUTPUT_DIR / "latest_analysis.json").write_text(
         json.dumps(
@@ -1017,8 +1738,8 @@ def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatc
         ),
         encoding="utf-8",
     )
-
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("report")
         calls.append(command)
         if command[:3] == [server.sys.executable, "main.py", "--marketplace"]:
             (server.OUTPUT_DIR / "latest_analysis.json").write_text(
@@ -1054,6 +1775,7 @@ def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatc
         total_steps: int,
         progress_writer=None,
     ) -> subprocess.CompletedProcess[str]:
+        events.append("frontend")
         calls.append(command)
         (server.OUTPUT_DIR / "frontend_check_results.json").write_text(
             json.dumps(
@@ -1091,13 +1813,216 @@ def test_frontend_retry_uses_background_chrome_cdp_refresh_by_default(monkeypatc
     assert "--cdp-endpoint" in frontend_command
     assert "--retries" not in frontend_command
     assert "--search-policy" in frontend_command
-    assert "ad-driven" in frontend_command
-    assert "--only-stale" in frontend_command
+    assert "always" in frontend_command
+    assert frontend_command[frontend_command.index("--timeout") + 1] == "18"
+    assert frontend_command[frontend_command.index("--sleep") + 1] == "0.5"
+    assert "--only-stale" not in frontend_command
+    assert "--limit" in frontend_command
+    assert frontend_command[frontend_command.index("--limit") + 1] == "3"
+    assert "--with-sellersprite-reverse-asin" not in frontend_command
+    assert "--sellersprite-target-count" not in frontend_command
     assert "--strict-live-pass" not in frontend_command
+    assert events[:2] == ["frontend", "report"]
     assert payload["returncode"] == 0
     assert payload["status_scope"] == "frontend_retry"
     assert payload["failure_mode"] == "chrome_cdp_frontend_check_passed"
-    assert "新读 1 个，跳过 0 个，沿用缓存 0 个，失败 0 个" in str(payload["message"])
+    assert "本轮队列 1/1" in str(payload["message"])
+    assert "新读 1" in str(payload["message"])
+    assert "失败 0" in str(payload["message"])
+
+
+def test_frontend_retry_skips_sellersprite_when_no_missing(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
+    calls: list[list[str]] = []
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        server,
+        "_frontend_refresh_needed_summary",
+        lambda: {
+            "frontend_queue_total": 1,
+            "frontend_refresh_needed_count": 1,
+            "frontend_cached_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        server,
+        "_sellersprite_reverse_needed_summary",
+        lambda priority="": {
+            "sellersprite_queue_total": 2,
+            "sellersprite_cached_count": 2,
+            "sellersprite_missing_count": 0,
+        },
+    )
+
+    def fake_frontend_command(
+        command: list[str],
+        timeout: int,
+        *,
+        step: int,
+        total_steps: int,
+        progress_writer=None,
+    ) -> subprocess.CompletedProcess[str]:
+        events.append("frontend")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="[frontend] checked 1 queued products; live=1", stderr="")
+
+    def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("report")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="report ok", stderr="")
+
+    monkeypatch.setattr(server, "_run_frontend_command_with_progress", fake_frontend_command)
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(
+        server,
+        "_run_sellersprite_command_with_progress",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("seller sprite should not run without missing ASIN")),
+    )
+    monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
+    server._lock.acquire(blocking=False)
+
+    server._run_frontend_retry()
+
+    assert events == ["frontend", "report"]
+
+
+def test_frontend_retry_runs_missing_sellersprite_before_report_refresh(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
+    calls: list[list[str]] = []
+    events: list[str] = []
+    seller_summary_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        server,
+        "_frontend_refresh_needed_summary",
+        lambda: {
+            "frontend_queue_total": 1,
+            "frontend_refresh_needed_count": 1,
+            "frontend_cached_count": 0,
+        },
+    )
+
+    def fake_seller_summary(priority: str = "") -> dict[str, object]:
+        seller_summary_calls["count"] += 1
+        if seller_summary_calls["count"] == 1:
+            return {
+                "sellersprite_queue_total": 3,
+                "sellersprite_cached_count": 1,
+                "sellersprite_missing_count": 2,
+                "sellersprite_missing_labels": ["US B0OWN0001", "US B0COMP0001"],
+            }
+        return {
+            "sellersprite_queue_total": 3,
+            "sellersprite_cached_count": 3,
+            "sellersprite_missing_count": 0,
+            "sellersprite_missing_labels": [],
+        }
+
+    monkeypatch.setattr(server, "_sellersprite_reverse_needed_summary", fake_seller_summary)
+    monkeypatch.setattr(server, "_sellersprite_reverse_command", lambda **kwargs: [server.sys.executable, "scripts/sellersprite_reverse_asin_fetch.py"])
+
+    def fake_frontend_command(
+        command: list[str],
+        timeout: int,
+        *,
+        step: int,
+        total_steps: int,
+        progress_writer=None,
+    ) -> subprocess.CompletedProcess[str]:
+        events.append("frontend")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="[frontend] checked 1 queued products; live=1", stderr="")
+
+    def fake_sellersprite_command(command: list[str], timeout: int, label: str) -> subprocess.CompletedProcess[str]:
+        events.append("sellersprite")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="[sellersprite] wrote cache; success=2/2", stderr="")
+
+    def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("report")
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="report ok", stderr="")
+
+    monkeypatch.setattr(server, "_run_frontend_command_with_progress", fake_frontend_command)
+    monkeypatch.setattr(server, "_run_sellersprite_command_with_progress", fake_sellersprite_command)
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
+    server._lock.acquire(blocking=False)
+
+    server._run_frontend_retry()
+
+    assert events == ["frontend", "sellersprite", "report"]
+    assert calls[1] == [server.sys.executable, "scripts/sellersprite_reverse_asin_fetch.py"]
+    assert server._sellersprite_async_status["running"] is False
+    assert server._sellersprite_async_status["sellersprite_missing_count"] == 0
+
+
+def test_frontend_retry_limit_expands_to_current_gap(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
+    monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "marketplace": "US",
+            "sku": f"SKU-{index}",
+            "asin": f"B0GAP{index:05d}",
+            "frontend_check_status": "待前台检查",
+        }
+        for index in range(7)
+    ]
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {"marketplace_results": [{"report_view_snapshot": {"frontend_check_queue_rows": rows}}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps({"items": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_frontend_command(command, timeout, *, step, total_steps, progress_writer=None):
+        calls.append(command)
+        (server.OUTPUT_DIR / "frontend_check_results.json").write_text(
+            json.dumps(
+                {
+                    "refresh_summary": {
+                        "frontend_refresh_total": 7,
+                        "frontend_refresh_live_checked": 7,
+                        "frontend_refresh_skipped": 0,
+                        "frontend_refresh_cache_used": 0,
+                        "frontend_refresh_failed": 0,
+                    },
+                    "items": [],
+                    "cache": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    def fake_run_command(command, timeout):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="report ok", stderr="")
+
+    monkeypatch.setattr(server, "_run_frontend_command_with_progress", fake_frontend_command)
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(server, "_start_sellersprite_reverse_async", lambda **kwargs: {})
+    monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
+    server._lock.acquire(blocking=False)
+
+    server._run_frontend_retry()
+
+    frontend_command = calls[0]
+    assert "--limit" in frontend_command
+    assert frontend_command[frontend_command.index("--limit") + 1] == "7"
 
 
 def test_daily_update_success_starts_p0_frontend_async_without_blocking_status(monkeypatch, tmp_path) -> None:
@@ -1143,11 +2068,36 @@ def test_daily_update_success_starts_p0_frontend_async_without_blocking_status(m
     assert "P0 前台后台检查已启动" in str(payload["frontend_async_status"]["message"])
 
 
+def test_daily_update_popen_failure_persists_failed_status(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+
+    def raise_popen_error(*args, **kwargs):
+        raise OSError("spawn denied")
+
+    monkeypatch.setattr(server.subprocess, "Popen", raise_popen_error)
+    monkeypatch.setattr(
+        server,
+        "_start_p0_frontend_async_if_needed",
+        lambda: (_ for _ in ()).throw(AssertionError("frontend async must not start after daily failure")),
+    )
+    server._lock.acquire(blocking=False)
+
+    server._run_daily_update()
+    payload = server._status_payload()
+
+    assert payload["running"] is False
+    assert payload["message"] == "daily update 失败，请查看输出摘要。"
+    assert payload["returncode"] == 127
+    assert "cannot start command: spawn denied" in payload["stderr_tail"]
+
+
 def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
+    sellersprite_calls: list[dict[str, str]] = []
+    events: list[str] = []
     server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (server.OUTPUT_DIR / "latest_analysis.json").write_text(
         json.dumps(
@@ -1188,6 +2138,7 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
         total_steps: int,
         progress_writer=None,
     ) -> subprocess.CompletedProcess[str]:
+        events.append("frontend")
         calls.append(command)
         (server.OUTPUT_DIR / "frontend_check_results.json").write_text(
             json.dumps(
@@ -1209,6 +2160,7 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
         return subprocess.CompletedProcess(command, 0, stdout="p0 ok", stderr="")
 
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("report")
         calls.append(command)
         if command[:3] == [server.sys.executable, "main.py", "--marketplace"]:
             (server.OUTPUT_DIR / "latest_analysis.json").write_text(
@@ -1247,6 +2199,11 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
 
     monkeypatch.setattr(server, "_run_frontend_command_with_progress", fake_frontend_command)
     monkeypatch.setattr(server, "_run_command", fake_run_command)
+    monkeypatch.setattr(
+        server,
+        "_start_sellersprite_reverse_async",
+        lambda **kwargs: events.append("sellersprite") or sellersprite_calls.append(kwargs) or {},
+    )
     monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
     server._frontend_async_lock.acquire(blocking=False)
 
@@ -1262,6 +2219,12 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
     assert "--require-competitor-samples" in frontend_command
     assert "--search-policy" in frontend_command
     assert frontend_command[frontend_command.index("--search-policy") + 1] == "always"
+    assert frontend_command[frontend_command.index("--timeout") + 1] == "18"
+    assert frontend_command[frontend_command.index("--sleep") + 1] == "0.5"
+    assert "--limit" in frontend_command
+    assert frontend_command[frontend_command.index("--limit") + 1] == "3"
+    assert "--with-sellersprite-reverse-asin" not in frontend_command
+    assert "--sellersprite-target-count" not in frontend_command
     assert calls[1][:3] == [server.sys.executable, "main.py", "--marketplace"]
     assert payload["running"] is False
     assert payload["frontend_async_status"]["running"] is False
@@ -1269,6 +2232,83 @@ def test_p0_frontend_async_refreshes_only_p0_queue(monkeypatch, tmp_path) -> Non
     assert payload["frontend_async_status"]["frontend_queue_total"] == 1
     assert payload["frontend_async_status"]["frontend_live_passed_count"] == 1
     assert "B0P1TEST01" not in "".join(payload["frontend_async_status"].get("frontend_live_passed_labels", []))
+    assert sellersprite_calls == [{"priority": "P0"}]
+    assert events[:2] == ["sellersprite", "frontend"]
+
+
+def test_p0_frontend_async_reports_failure_when_final_report_refresh_cannot_start(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
+    monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
+    server.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (server.OUTPUT_DIR / "latest_analysis.json").write_text(
+        json.dumps(
+            {
+                "marketplace_results": [
+                    {
+                        "report_view_snapshot": {
+                            "frontend_check_queue_rows": [
+                                {
+                                    "priority": "P0",
+                                    "marketplace": "UK",
+                                    "sku": "SKU-P0",
+                                    "asin": "B0P0TEST01",
+                                    "frontend_check_status": "待前台检查",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_frontend_command(
+        command: list[str],
+        timeout: int,
+        *,
+        step: int,
+        total_steps: int,
+        progress_writer=None,
+    ) -> subprocess.CompletedProcess[str]:
+        (server.OUTPUT_DIR / "frontend_check_results.json").write_text(
+            json.dumps(
+                {
+                    "refresh_summary": {
+                        "frontend_refresh_total": 1,
+                        "frontend_refresh_live_checked": 1,
+                        "frontend_refresh_skipped": 0,
+                        "frontend_refresh_cache_used": 0,
+                        "frontend_refresh_failed": 0,
+                    },
+                    "items": [],
+                    "cache": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="p0 ok", stderr="")
+
+    monkeypatch.setattr(server, "_run_frontend_command_with_progress", fake_frontend_command)
+    monkeypatch.setattr(
+        server,
+        "_run_command",
+        lambda command, timeout: subprocess.CompletedProcess(command, 127, "", "cannot start command: spawn denied"),
+    )
+    monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
+    server._frontend_async_lock.acquire(blocking=False)
+
+    server._run_p0_frontend_async()
+    payload = server._status_payload()
+    async_status = payload["frontend_async_status"]
+
+    assert async_status["running"] is False
+    assert async_status["returncode"] == 127
+    assert "cannot start command: spawn denied" in async_status["stderr_tail"]
+    assert async_status["status_scope"] == "frontend_async"
 
 
 def test_p0_frontend_async_refreshes_today_product_page_without_competitor_samples(monkeypatch, tmp_path) -> None:
@@ -1377,7 +2417,7 @@ def test_p0_frontend_async_refreshes_today_product_page_without_competitor_sampl
     assert "--require-competitor-samples" in calls[0]
 
 
-def test_frontend_retry_skips_all_today_chrome_cdp_rows(monkeypatch, tmp_path) -> None:
+def test_frontend_retry_forces_all_today_chrome_cdp_rows(monkeypatch, tmp_path) -> None:
     _patch_paths(monkeypatch, tmp_path)
     monkeypatch.setattr(server, "_today_iso", lambda: "2026-06-17")
     calls: list[list[str]] = []
@@ -1406,6 +2446,24 @@ def test_frontend_retry_skips_all_today_chrome_cdp_rows(monkeypatch, tmp_path) -
         ),
         encoding="utf-8",
     )
+    (server.OUTPUT_DIR / "sellersprite_reverse_asin_results.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "marketplace": "UK",
+                        "asin": f"B0PASS000{index}",
+                        "seller_sprite_check_status": "已抓取",
+                        "data_date": "2026-06-17",
+                        "keywords": [{"keyword": "cached keyword"}],
+                    }
+                    for index in range(8)
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         calls.append(command)
@@ -1417,18 +2475,24 @@ def test_frontend_retry_skips_all_today_chrome_cdp_rows(monkeypatch, tmp_path) -
         "_run_frontend_command_with_progress",
         lambda command, timeout, *, step, total_steps, progress_writer=None: fake_run_command(command, timeout),
     )
+    monkeypatch.setattr(server, "_start_sellersprite_reverse_async", lambda **kwargs: {})
     monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: True)
     server._lock.acquire(blocking=False)
 
     server._run_frontend_retry()
     payload = server._status_payload()
 
-    assert calls == []
+    assert len(calls) == 2
+    assert calls[0][:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "chrome-cdp"]
+    assert "--only-stale" not in calls[0]
+    assert "--limit" in calls[0]
+    assert calls[0][calls[0].index("--limit") + 1] == "7"
+    assert calls[1][:3] == [server.sys.executable, "main.py", "--marketplace"]
     assert payload["returncode"] == 0
-    assert payload["failure_mode"] == "frontend_refresh_not_needed"
-    assert payload["frontend_refresh_skipped"] == 8
-    assert "无需刷新" in str(payload["message"])
-    assert "未访问 Amazon" in str(payload["message"])
+    assert payload["failure_mode"] == "chrome_cdp_frontend_check_passed"
+    assert "调查完成" in str(payload["message"])
+    assert "本轮队列 8/8" in str(payload["message"])
+    assert "无需刷新" not in str(payload["message"])
 
 
 def test_frontend_retry_can_use_urllib_when_browser_frontend_disabled(monkeypatch, tmp_path) -> None:
@@ -1469,6 +2533,66 @@ def test_frontend_retry_can_use_urllib_when_browser_frontend_disabled(monkeypatc
     assert payload["returncode"] == 0
     assert payload["status_scope"] == "frontend_retry"
     assert payload["failure_mode"] == "chrome_cdp_frontend_check_partial"
+
+
+def test_frontend_retry_runs_sellersprite_even_when_chrome_cdp_unavailable(monkeypatch, tmp_path) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    monkeypatch.delenv(server.ENABLE_BROWSER_FRONTEND_ENV, raising=False)
+    events: list[str] = []
+    seller_summary_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        server,
+        "_frontend_refresh_needed_summary",
+        lambda: {
+            "frontend_queue_total": 1,
+            "frontend_refresh_needed_count": 1,
+            "frontend_cached_count": 0,
+        },
+    )
+
+    def fake_seller_summary(priority: str = "") -> dict[str, object]:
+        seller_summary_calls["count"] += 1
+        if seller_summary_calls["count"] == 1:
+            return {
+                "sellersprite_queue_total": 2,
+                "sellersprite_cached_count": 0,
+                "sellersprite_missing_count": 2,
+            }
+        return {
+            "sellersprite_queue_total": 2,
+            "sellersprite_cached_count": 2,
+            "sellersprite_missing_count": 0,
+        }
+
+    monkeypatch.setattr(server, "_sellersprite_reverse_needed_summary", fake_seller_summary)
+    monkeypatch.setattr(server, "_sellersprite_reverse_command", lambda **kwargs: [server.sys.executable, "scripts/sellersprite_reverse_asin_fetch.py"])
+    monkeypatch.setattr(server, "_start_chrome_cdp_if_needed", lambda endpoint=server.CHROME_CDP_ENDPOINT: False)
+    monkeypatch.setattr(
+        server,
+        "_run_frontend_command_with_progress",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("frontend command should be skipped when Chrome CDP is unavailable")),
+    )
+
+    def fake_sellersprite_command(command: list[str], timeout: int, label: str) -> subprocess.CompletedProcess[str]:
+        events.append("sellersprite")
+        return subprocess.CompletedProcess(command, 0, stdout="seller ok", stderr="")
+
+    def fake_run_command(command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        events.append("report")
+        return subprocess.CompletedProcess(command, 0, stdout="report ok", stderr="")
+
+    monkeypatch.setattr(server, "_run_sellersprite_command_with_progress", fake_sellersprite_command)
+    monkeypatch.setattr(server, "_run_command", fake_run_command)
+    server._lock.acquire(blocking=False)
+
+    server._run_frontend_retry()
+    payload = server._status_payload()
+
+    assert events == ["sellersprite", "report"]
+    assert payload["failure_mode"] == "chrome_cdp_unavailable"
+    assert payload["soft_failure"] is True
+    assert server._sellersprite_async_status["sellersprite_missing_count"] == 0
 
 
 def test_frontend_retry_refreshes_reports_after_partial_live_failure(monkeypatch, tmp_path) -> None:
@@ -1538,15 +2662,17 @@ def test_frontend_retry_refreshes_reports_after_partial_live_failure(monkeypatch
 
     assert len(calls) == 2
     assert calls[0][:4] == [server.sys.executable, "scripts/run_frontend_checks.py", "--method", "chrome-cdp"]
-    assert "--only-stale" in calls[0]
+    assert "--only-stale" not in calls[0]
     assert calls[1][:3] == [server.sys.executable, "main.py", "--marketplace"]
     assert payload["returncode"] == 1
     assert payload["status_scope"] == "frontend_retry"
     assert payload["failure_mode"] == "chrome_cdp_frontend_check_passed_with_pending"
     assert payload["soft_failure"] is True
-    assert "新读 0 个，跳过 4 个，沿用缓存 0 个，失败 1 个" in str(payload["message"])
-    assert "刷新通过" in str(payload["message"])
-    assert "待检查：DE B0WAIT0001" in str(payload["message"])
+    assert "本轮队列 4/5" in str(payload["message"])
+    assert "新读 0" in str(payload["message"])
+    assert "失败 1" in str(payload["message"])
+    assert "调查完成" in str(payload["message"])
+    assert "待补：DE B0WAIT0001" in str(payload["message"])
 
 
 def test_config_upload_requires_expected_filename(monkeypatch, tmp_path) -> None:

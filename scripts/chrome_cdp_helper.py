@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,8 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENDPOINT = "http://127.0.0.1:9222"
 DEFAULT_PROFILE_DIR = ROOT / "data" / "output" / "chrome_cdp_profile"
 MAC_CHROME_APP = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-WINDOWS_CHROME_APP = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-DEFAULT_CHROME_PATH = WINDOWS_CHROME_APP if sys.platform.startswith("win") else MAC_CHROME_APP
 PRODUCT_URLS = {
     "UK": "https://www.amazon.co.uk/dp/{asin}?th=1",
     "US": "https://www.amazon.com/dp/{asin}",
@@ -64,10 +61,9 @@ def probe_command(
     asin: str,
     endpoint: str = DEFAULT_ENDPOINT,
     attempts: int = 20,
-    python: str | None = None,
 ) -> list[str]:
     return [
-        python or sys.executable or "python",
+        ".venv_mac/bin/python",
         "scripts/run_frontend_checks.py",
         "--method",
         "chrome-cdp",
@@ -96,8 +92,7 @@ def build_status_payload(
     port: int = 9222,
     attempts: int = 20,
     profile_dir: Path = DEFAULT_PROFILE_DIR,
-    chrome_path: str = DEFAULT_CHROME_PATH,
-    python: str | None = None,
+    chrome_path: str = MAC_CHROME_APP,
 ) -> dict[str, Any]:
     available = endpoint_available(endpoint)
     return {
@@ -117,7 +112,6 @@ def build_status_payload(
             asin=asin,
             endpoint=endpoint,
             attempts=attempts,
-            python=python,
         ),
     }
 
@@ -130,8 +124,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=9222)
     parser.add_argument("--attempts", type=int, default=20)
     parser.add_argument("--profile-dir", type=Path, default=DEFAULT_PROFILE_DIR)
-    parser.add_argument("--chrome-path", default=DEFAULT_CHROME_PATH)
-    parser.add_argument("--python", default=sys.executable or "python")
+    parser.add_argument("--chrome-path", default=MAC_CHROME_APP)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -143,7 +136,6 @@ def main() -> int:
         attempts=args.attempts,
         profile_dir=args.profile_dir,
         chrome_path=args.chrome_path,
-        python=args.python,
     )
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))

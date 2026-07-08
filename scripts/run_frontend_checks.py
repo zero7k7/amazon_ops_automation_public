@@ -18,6 +18,7 @@ try:
     from scripts import frontend_product_fetch as product_fetch
     from scripts import frontend_check_results as result_state
     from scripts import frontend_search_fetch as search_fetch
+    from scripts import sellersprite_reverse_asin_fetch as sellersprite_fetch
     from scripts.validate_frontend_stability import build_stability_report
     from scripts.probe_frontend_chrome_cdp import _cdp_available as _chrome_cdp_available
     from scripts.probe_frontend_chrome_cdp import run_chrome_cdp_probe
@@ -29,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - used when executed as scripts/
     import frontend_product_fetch as product_fetch
     import frontend_check_results as result_state
     import frontend_search_fetch as search_fetch
+    import sellersprite_reverse_asin_fetch as sellersprite_fetch
     with contextlib.suppress(Exception):
         from validate_frontend_stability import build_stability_report
         from probe_frontend_chrome_cdp import _cdp_available as _chrome_cdp_available
@@ -743,7 +745,7 @@ def _is_today_chrome_cdp_record(row: dict, today: str | None = None, *, require_
     is_today = (
         _is_success_record(row)
         and str(row.get("frontend_check_method") or "") == "chrome-cdp"
-        and not bool(row.get("frontend_cache_used"))
+        and not result_state.boolish_flag(row.get("frontend_cache_used"))
         and _record_data_date(row) == today
     )
     if not is_today:
@@ -843,6 +845,12 @@ def _record_from_cache(row: dict, cached: dict, fetch_error: str, extra: dict[st
                 "frontend_search_method": "",
                 "frontend_search_keyword": current_search_keyword,
                 "frontend_search_url": current_search_url or copied.get("frontend_search_url"),
+                "frontend_price_delta_pct": "",
+                "frontend_rating_delta": "",
+                "frontend_review_delta_pct": "",
+                "frontend_competitor_price_median": "",
+                "frontend_competitor_rating_avg": "",
+                "frontend_competitor_review_median": "",
             }
         )
     if extra:
@@ -860,6 +868,17 @@ def _record_from_cache(row: dict, cached: dict, fetch_error: str, extra: dict[st
                     continue
             if value not in (None, "", [], {}):
                 copied[key] = value
+    if search_context_changed:
+        copied.update(
+            {
+                "frontend_price_delta_pct": "",
+                "frontend_rating_delta": "",
+                "frontend_review_delta_pct": "",
+                "frontend_competitor_price_median": "",
+                "frontend_competitor_rating_avg": "",
+                "frontend_competitor_review_median": "",
+            }
+        )
     copied.update(_quality_payload_from_record(copied, fetch_error, basis="cache"))
     copied["frontend_auto_conclusion_basis"] = "cache"
     return copied
@@ -1182,7 +1201,7 @@ def _score_search_page(parsed_product: dict[str, str], search_payload: dict[str,
     flags: list[str] = []
     reasons: list[str] = []
     components: dict[str, int] = {}
-    partial_evidence = bool(search_payload.get("frontend_search_partial_evidence"))
+    partial_evidence = result_state.boolish_flag(search_payload.get("frontend_search_partial_evidence"))
     result_count = _parse_number_text(search_payload.get("frontend_search_result_count"), decimal_allowed=False)
 
     count = len(competitors)
@@ -1374,7 +1393,14 @@ def _auto_frontend_conclusion(
     strong_search = search_score >= 70
     usable_evidence = product_score >= 45 or search_score >= 45
 
-    if failure_category not in {"none", ""} and not usable_evidence:
+    if basis == "cache":
+        code = "INSUFFICIENT_EVIDENCE"
+        label = "缓存证据，仅背景参考，不能支持放量"
+        confidence = "low"
+        reasons = [failure.get("frontend_failure_reason") or "本次实时读取未成功，沿用缓存仅供背景参考"]
+        blocked = ["bid_up", "budget_up", "broad_scale"]
+        allowed = ["observe", "bid_down", "negative_exact"]
+    elif failure_category not in {"none", ""} and not usable_evidence:
         code = "INSUFFICIENT_EVIDENCE"
         label = "自动证据不足，不能用于强诊断"
         confidence = "low"
@@ -1525,7 +1551,7 @@ def _quality_payload_from_record(record: dict, fetch_error: str = "", *, basis: 
         "frontend_competitors": record.get("frontend_competitors") or [],
         "own_search_position": record.get("own_search_position") or "",
         "frontend_search_result_count": record.get("frontend_search_result_count") or "",
-        "frontend_search_partial_evidence": bool(record.get("frontend_search_partial_evidence")),
+        "frontend_search_partial_evidence": result_state.boolish_flag(record.get("frontend_search_partial_evidence")),
     }
     return _frontend_quality_payload(
         parsed,
@@ -1763,7 +1789,15 @@ def _result_row_from_cdp_probe(
     raw_attempts = [attempt for attempt in payload.get("attempts", []) if isinstance(attempt, dict)]
 
     if attempts < 20:
-        latest = next((attempt for attempt in reversed(raw_attempts) if attempt.get("success")), raw_attempts[-1] if raw_attempts else {})
+        latest = next(
+            (
+                attempt
+                for attempt in reversed(raw_attempts)
+                if result_state.boolish_flag(attempt.get("success"))
+            ),
+            raw_attempts[-1] if raw_attempts else {},
+        )
+        latest_success = result_state.boolish_flag(latest.get("success"))
         parsed = {
             "marketplace": str(row.get("marketplace") or ""),
             "title": str(latest.get("title") or ""),
@@ -1775,13 +1809,13 @@ def _result_row_from_cdp_probe(
             "buy_box": str(latest.get("buy_box") or "识别到购买按钮"),
             "delivery": str(latest.get("location") or ""),
             "visible_location": str(latest.get("location") or ""),
-            "captcha_or_block": "是" if latest.get("captcha_or_block") else "否",
+            "captcha_or_block": "是" if result_state.boolish_flag(latest.get("captcha_or_block")) else "否",
         }
-        status = "已自动检查" if latest.get("success") else "待前台检查"
-        fetch_error = "" if latest.get("success") else _shorten(str(latest.get("error") or latest.get("navigation_warning") or "Chrome CDP 实时读取失败"), 180)
+        status = "已自动检查" if latest_success else "待前台检查"
+        fetch_error = "" if latest_success else _shorten(str(latest.get("error") or latest.get("navigation_warning") or "Chrome CDP 实时读取失败"), 180)
         search_payload = _default_search_payload(row, search_policy)
         search_error = ""
-        if latest.get("success") and search_payload.get("frontend_search_url") and _should_check_search_page(row, search_policy):
+        if latest_success and search_payload.get("frontend_search_url") and _should_check_search_page(row, search_policy):
             parsed_search, search_error, search_parser = _parse_search_results_chrome_cdp(
                 str(search_payload.get("frontend_search_url") or ""),
                 timeout,
@@ -1799,7 +1833,7 @@ def _result_row_from_cdp_probe(
             )
         result = _build_frontend_result_row(
             row,
-            parsed if latest.get("success") else {},
+            parsed if latest_success else {},
             fetch_error=fetch_error,
             fetch_method="chrome-cdp",
             location_note=str(latest.get("location") or ""),
@@ -1821,13 +1855,13 @@ def _result_row_from_cdp_probe(
     if marketplace_key and asin_key:
         attempts_path = OUTPUT_DIR / f"frontend_stability_attempts_{marketplace_key}_{asin_key}.json"
         report_path = OUTPUT_DIR / f"frontend_stability_report_{marketplace_key}_{asin_key}.json"
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        attempts_path.parent.mkdir(parents=True, exist_ok=True)
         attempts_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     passing_attempt_numbers = {
         str(attempt.get("attempt") or attempt.get("index") or "")
         for attempt in report.get("attempts", [])
-        if isinstance(attempt, dict) and attempt.get("success")
+        if isinstance(attempt, dict) and result_state.boolish_flag(attempt.get("success"))
     }
     passing_attempts = [
         attempt
@@ -1848,13 +1882,14 @@ def _result_row_from_cdp_probe(
         "visible_location": str(latest.get("location") or ""),
         "captcha_or_block": "否",
     }
-    status = "已自动检查" if report.get("passed") else "待前台检查"
-    fetch_error = "" if report.get("passed") else (
+    report_passed = result_state.boolish_flag(report.get("passed"))
+    status = "已自动检查" if report_passed else "待前台检查"
+    fetch_error = "" if report_passed else (
         f"Chrome CDP 20次验收未通过：{report.get('success_count')}/{report.get('total_attempts')}，失败 {report.get('failure_count')}"
     )
     result = _build_frontend_result_row(
         row,
-        parsed if report.get("passed") else {},
+        parsed if report_passed else {},
         fetch_error=fetch_error,
         fetch_method="chrome-cdp",
         location_note=str(latest.get("location") or ""),
@@ -1867,7 +1902,7 @@ def _result_row_from_cdp_probe(
             "frontend_stability_success_count": report.get("success_count"),
             "frontend_stability_failure_count": report.get("failure_count"),
             "frontend_stability_success_rate": report.get("success_rate"),
-            "frontend_stability_passed": bool(report.get("passed")),
+            "frontend_stability_passed": report_passed,
         }
     )
     return result
@@ -2034,12 +2069,24 @@ def check_frontend_queue(
     if priority_filter:
         rows = [row for row in rows if str(row.get("priority") or "").strip().upper() == priority_filter]
     _, cache = _load_previous_frontend_state()
-    if limit is not None:
-        rows = rows[:limit]
     output: list[dict] = []
     method_key = (method or "").lower()
     today = _today_iso()
     should_skip_fresh = only_stale and method_key == "chrome-cdp" and cdp_attempts < 20 and not any(filters.values())
+    if limit is not None:
+        if should_skip_fresh:
+            rows = [
+                row
+                for row in rows
+                if not _fresh_chrome_cdp_record_for(
+                    row,
+                    cache,
+                    today,
+                    require_competitor_samples=require_competitor_samples,
+                )
+            ][:limit]
+        else:
+            rows = rows[:limit]
     browser_session = (
         FrontendBrowserSession(
             use_chrome=method_key in {"chrome", "chrome-persistent"},
@@ -2261,8 +2308,8 @@ def check_frontend_queue(
                 str(row.get("frontend_check_status") or "") == "已自动检查"
                 and str(row.get("frontend_check_method") or "") == "chrome-cdp"
                 and str(row.get("source") or "") == "auto_frontend_check"
-                and not bool(row.get("frontend_cache_used"))
-                and bool(row.get("frontend_stability_passed"))
+                and not result_state.boolish_flag(row.get("frontend_cache_used"))
+                and result_state.boolish_flag(row.get("frontend_stability_passed"))
                 and float(row.get("frontend_stability_success_rate") or 0) >= 0.8
                 and int(row.get("frontend_stability_total_attempts") or 0) >= 20
             )
@@ -2367,6 +2414,15 @@ def main() -> int:
     parser.add_argument("--manual-stability-failure-count", type=int, default=None)
     parser.add_argument("--manual-stability-success-rate", type=float, default=None)
     parser.add_argument("--manual-stability-passed", action="store_true")
+    parser.add_argument(
+        "--with-sellersprite-reverse-asin",
+        action="store_true",
+        help="额外抓取卖家精灵 ASIN 关键词反查并写入独立缓存。默认关闭，避免日报硬依赖浏览器插件。",
+    )
+    parser.add_argument("--sellersprite-target-count", type=int, default=50)
+    parser.add_argument("--sellersprite-limit", type=int, default=None)
+    parser.add_argument("--sellersprite-profile", default="")
+    parser.add_argument("--sellersprite-extension-path", default="")
     args = parser.parse_args()
 
     if not LATEST_ANALYSIS.exists():
@@ -2424,6 +2480,20 @@ def main() -> int:
     if not args.dry_run:
         _write_results_payload(rows)
         print(f"[frontend] wrote {RESULTS_PATH}")
+        if args.with_sellersprite_reverse_asin:
+            try:
+                profile = Path(args.sellersprite_profile).expanduser() if args.sellersprite_profile else sellersprite_fetch.DEFAULT_PROFILE
+                extension_path = Path(args.sellersprite_extension_path).expanduser() if args.sellersprite_extension_path else None
+                sellersprite_fetch.fetch_for_rows(
+                    rows,
+                    profile=profile,
+                    extension_path=extension_path,
+                    target_count=args.sellersprite_target_count,
+                    limit=args.sellersprite_limit,
+                    visible=True,
+                )
+            except Exception as exc:
+                print(f"[frontend] seller sprite reverse asin failed: {exc}")
     summary = _refresh_summary(rows)
     print(
         "[frontend] checked "

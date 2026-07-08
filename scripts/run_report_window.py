@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
@@ -22,6 +23,14 @@ HEALTH_URL = "http://127.0.0.1:8765/health"
 
 _children: list[subprocess.Popen[object]] = []
 _cleaned = False
+
+
+def _child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH")
+    root = str(ROOT)
+    env["PYTHONPATH"] = root if not existing else f"{root}{os.pathsep}{existing}"
+    return env
 
 
 def _health_ok(timeout: float = 0.5) -> bool:
@@ -81,14 +90,14 @@ def _install_signal_handlers() -> None:
 
 
 def _start_report_server() -> subprocess.Popen[object]:
-    process = subprocess.Popen([sys.executable, "scripts/report_action_server.py"], cwd=ROOT)
+    process = subprocess.Popen([sys.executable, "scripts/report_action_server.py"], cwd=ROOT, env=_child_env())
     _children.append(process)
     _wait_for_server(process)
     return process
 
 
 def _run_checked(command: list[str]) -> int:
-    process = subprocess.Popen(command, cwd=ROOT)
+    process = subprocess.Popen(command, cwd=ROOT, env=_child_env())
     _children.append(process)
     return process.wait()
 

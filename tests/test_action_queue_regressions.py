@@ -4,7 +4,7 @@ import pandas as pd
 
 from src import report_presentation
 from src.analyze_rules import _is_low_acos, _target_acos_value
-from src.report_presentation import _apply_manual_feedback_to_search_queue, _search_term_action_from_item
+from src.report_presentation import _apply_manual_feedback_to_search_queue, _build_scale_keyword_rows, _search_term_action_from_item
 
 
 def search_item(target: str, clicks: int, spend: float, **evidence: object) -> dict:
@@ -30,11 +30,14 @@ def search_item(target: str, clicks: int, spend: float, **evidence: object) -> d
 
 
 def test_bid_down_copy_line_never_says_price_down() -> None:
-    row = _search_term_action_from_item(search_item("led desk lamp", 12, 6), "US")
+    row = _search_term_action_from_item(search_item("metal desk lamp", 12, 6), "US")
 
     assert row["suggested_action"] == "降竞价10%-20%"
     assert row["copy_action_line"] == "建议降竞价 10%-15%"
     assert "降价" not in row["copy_action_line"]
+    assert row["normalized_action"] == "bid_down"
+    assert row["action_scope"] == "search_term"
+    assert row["action_id"] == "US||SKU-1||B000TEST01||search_term||metal desk lamp||bid_down"
 
 
 def test_low_sample_asin_target_stays_watch() -> None:
@@ -45,6 +48,52 @@ def test_low_sample_asin_target_stays_watch() -> None:
 
     assert row["suggested_action"] == "观察"
     assert row["copy_action_line"] == "建议观察"
+    assert row["normalized_action"] == "observe"
+    assert row["action_scope"] == "asin_target"
+    assert row["action_id"] == "US||SKU-1||B000TEST01||asin_target||b012345678||observe"
+
+
+def test_scale_keyword_rows_carry_action_identity() -> None:
+    rows = _build_scale_keyword_rows(
+        {
+            "搜索词分析": {
+                "14d": [
+                    {
+                        "marketplace": "UK",
+                        "sku": "SKU-SCALEID",
+                        "asin": "B0SCALEID",
+                        "product_name": "Scale identity product",
+                        "search_term": "serving board",
+                        "campaign_name": "Auto campaign",
+                        "ad_group_name": "Auto group",
+                        "match_type": "EXACT",
+                        "clicks": 4,
+                        "spend": 1.2,
+                        "ad_orders": 1,
+                        "ad_sales": 30,
+                        "ACOS": 0.04,
+                        "CVR": 0.25,
+                    }
+                ]
+            }
+        },
+        [
+            {
+                "站点": "UK",
+                "产品": "Scale identity product",
+                "SKU": "SKU-SCALEID",
+                "ASIN": "B0SCALEID",
+                "目标 ACOS": "10%",
+                "放量等级": "谨慎放量候选",
+            }
+        ],
+        "UK",
+    )
+
+    assert rows[0]["scale_action"] == "试探提高竞价 3%-5%"
+    assert rows[0]["normalized_action"] == "bid_up"
+    assert rows[0]["action_scope"] == "search_term"
+    assert rows[0]["action_id"] == "UK||SKU-SCALEID||B0SCALEID||search_term||serving board||bid_up"
 
 
 def test_search_queue_feedback_matches_exact_term_not_whole_product(monkeypatch) -> None:

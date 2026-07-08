@@ -11,6 +11,12 @@ RecordKeyFunc = Callable[[dict], tuple[str, str, str]]
 SuccessFunc = Callable[[dict], bool]
 
 
+def boolish_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "是", "已验证"}
+
+
 def record_key(row: dict) -> tuple[str, str, str]:
     return (
         str(row.get("marketplace") or "").strip().upper(),
@@ -103,7 +109,7 @@ def refresh_summary(rows: list[dict]) -> dict[str, object]:
             skipped += 1
             if label:
                 skipped_labels.append(label)
-        elif action == "cache_fallback" or bool(row.get("frontend_cache_used")):
+        elif action == "cache_fallback" or boolish_flag(row.get("frontend_cache_used")):
             cache_used += 1
             if label:
                 cache_labels.append(label)
